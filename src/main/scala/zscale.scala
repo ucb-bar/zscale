@@ -6,6 +6,7 @@ import Chisel._
 import uncore._
 import rocket._
 import rocket.Util._
+import Instructions._
 
 abstract trait PCUParameters extends UsesParameters
 {
@@ -223,11 +224,15 @@ class InstLineBuffer extends Module with PCUParameters
 
 class CtrlDpathIO extends Bundle with PCUParameters
 {
+  val sel_alu1 = UInt(OUTPUT, 2)
+  val sel_alu2 = UInt(OUTPUT, 3)
+  val sel_imm = UInt(OUTPUT, 3)
+  val wen = Bool(OUTPUT)
+
   val stallf = Bool(OUTPUT)
   val killf = Bool(OUTPUT)
   val stalldx = Bool(OUTPUT)
   val killdx = Bool(OUTPUT)
-  val wen = Bool(OUTPUT)
 
   val inst = Bits(INPUT, coreInstBits)
 }
@@ -242,14 +247,27 @@ class Control extends Module with PCUParameters
   io.imem.req.valid := Bool(true)
 
   val id_valid = Reg(init = Bool(false))
-
   id_valid := io.imem.resp.valid
+
+  val cs = DecodeLogic(io.dpath.inst,
+             //  val s_alu1  s_alu2  imm    wen
+             //   |  |       |       |      |
+             List(N, A1_X,   A2_X,   IMM_X, X), Array(
+      ADDI-> List(Y, A1_RS1, A2_IMM, IMM_I, Y),
+      ADD->  List(Y, A1_RS1, A2_RS2, IMM_X, Y)
+    ))
+
+  val (id_val: Bool) :: id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: (id_wen: Bool) :: Nil = cs
+
+  io.dpath.sel_alu1 := id_sel_alu1
+  io.dpath.sel_alu2 := id_sel_alu2
+  io.dpath.sel_imm := id_sel_imm
+  io.dpath.wen := !io.dpath.killdx && id_wen
 
   io.dpath.stallf := !io.imem.resp.valid || io.dpath.stalldx
   io.dpath.killf := io.dpath.stallf
   io.dpath.stalldx := Bool(false)
   io.dpath.killdx := !id_valid || io.dpath.stalldx
-  io.dpath.wen := !io.dpath.killdx
 }
 
 class ALU extends Module with PCUParameters
@@ -286,6 +304,8 @@ class Datapath extends Module with PCUParameters
     id_inst := io.imem.resp.bits.inst
   }
 
+  // similar to Rocket's RF
+  // this one doesn't have a write->read bypass
   class RegFile {
     private val rf = Mem(Bits(width = xprLen), 31)
     def read(addr: UInt) = Mux(addr != UInt(0), rf(~addr), Bits(0))
@@ -296,17 +316,49 @@ class Datapath extends Module with PCUParameters
     }
   }
 
+  // copied from Rocket's datapath
+  def imm(sel: Bits, inst: Bits) = {
+    val sign = inst(31).toSInt
+    val b30_20 = Mux(sel === IMM_U, inst(30,20).toSInt, sign)
+    val b19_12 = Mux(sel != IMM_U && sel != IMM_UJ, sign, inst(19,12).toSInt)
+    val b11 = Mux(sel === IMM_U || sel === IMM_Z, SInt(0),
+              Mux(sel === IMM_UJ, inst(20).toSInt,
+              Mux(sel === IMM_SB, inst(7).toSInt, sign)))
+    val b10_5 = Mux(sel === IMM_U || sel === IMM_Z, Bits(0), inst(30,25))
+    val b4_1 = Mux(sel === IMM_U, Bits(0),
+               Mux(sel === IMM_S || sel === IMM_SB, inst(11,8),
+               Mux(sel === IMM_Z, inst(19,16), inst(24,21))))
+    val b0 = Mux(sel === IMM_S, inst(7),
+             Mux(sel === IMM_I, inst(20),
+             Mux(sel === IMM_Z, inst(15), Bits(0))))
+    
+    Cat(sign, b30_20, b19_12, b11, b10_5, b4_1, b0).toSInt
+  }
+
   val rf = new RegFile
   val id_addr = Vec(id_inst(19, 15), id_inst(24,20))
   val id_rs = id_addr.map(rf.read _)
   val id_rd = id_inst(11, 7)
+  val id_imm = imm(io.ctrl.sel_imm, id_inst)
 
   val alu = Module(new ALU)
-  alu.io.in1 := id_rs(0)
-  alu.io.in2 := id_rs(1)
+  alu.io.in1 := MuxLookup(io.ctrl.sel_alu1, SInt(0), Seq(
+      A1_RS1 -> id_rs(0).toSInt,
+      A1_PC -> id_pc.toSInt
+    ))
+  alu.io.in2 := MuxLookup(io.ctrl.sel_alu2, SInt(0), Seq(
+      A2_FOUR -> SInt(4),
+      A2_RS2 -> id_rs(1).toSInt,
+      A2_IMM -> id_imm
+    ))
 
-  val waddr = id_rd
-  val wdata = alu.io.out
+  val muldiv = Module(new MulDiv, {case XprLen => 32})
+  muldiv.io.req.valid := Bool(false)
+  muldiv.io.req.bits.dw := DW_64
+  muldiv.io.resp.ready := Bool(true)
+
+  val waddr = Mux(muldiv.io.resp.valid, muldiv.io.resp.bits.tag, id_rd)
+  val wdata = Mux(muldiv.io.resp.valid, muldiv.io.resp.bits.data, alu.io.out)
 
   when (io.ctrl.wen) {
     rf.write(waddr, wdata)
