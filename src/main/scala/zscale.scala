@@ -7,7 +7,8 @@ import uncore._
 import rocket._
 import rocket.Util._
 
-abstract trait PCUParameters extends UsesParameters {
+abstract trait PCUParameters extends UsesParameters
+{
   val memAddrBits = params(MIFAddrBits)
   val memDataBits = params(MIFDataBits)
   val memDataBeats = params(MIFDataBeats)
@@ -156,20 +157,24 @@ class ScratchPad extends Module with PCUParameters
   io.mem.resp.bits.tag := tag
 }
 
-class InstMemReq extends Bundle with PCUParameters {
+class InstMemReq extends Bundle with PCUParameters
+{
   val addr = UInt(width = addrBits)
 }
 
-class InstMemResp extends Bundle with PCUParameters {
+class InstMemResp extends Bundle with PCUParameters
+{
   val inst = Bits(width = coreInstBits)
 }
 
-class InstMemIO extends Bundle with PCUParameters {
-  val req = Decoupled(new InstMemReq)
+class InstMemIO extends Bundle with PCUParameters
+{
+  val req = Valid(new InstMemReq)
   val resp = Valid(new InstMemResp).flip
 }
 
-class InstLineBuffer extends Module with PCUParameters {
+class InstLineBuffer extends Module with PCUParameters
+{
   val io = new Bundle {
     val cpu = new InstMemIO().flip
     val mem = new ScratchPadIO
@@ -195,7 +200,6 @@ class InstLineBuffer extends Module with PCUParameters {
   val line = Vec.fill(nInst){Reg(Bits(width = coreInstBits))}
 
   // front side of line buffer
-  io.cpu.req.ready := service_hit || service_nohit && io.mem.req.ready
   io.cpu.resp.valid := service_hit
   io.cpu.resp.bits.inst := Mux1H(req_inst_onehot, line)
 
@@ -217,31 +221,119 @@ class InstLineBuffer extends Module with PCUParameters {
   }
 }
 
-class Datapath extends Module with PCUParameters {
+class CtrlDpathIO extends Bundle with PCUParameters
+{
+  val stallf = Bool(OUTPUT)
+  val killf = Bool(OUTPUT)
+  val stalldx = Bool(OUTPUT)
+  val killdx = Bool(OUTPUT)
+  val wen = Bool(OUTPUT)
+
+  val inst = Bits(INPUT, coreInstBits)
+}
+
+class Control extends Module with PCUParameters
+{
   val io = new Bundle {
+    val dpath = new CtrlDpathIO
+    val imem = new InstMemIO
+  }
+
+  io.imem.req.valid := Bool(true)
+
+  val id_valid = Reg(init = Bool(false))
+
+  id_valid := io.imem.resp.valid
+
+  io.dpath.stallf := !io.imem.resp.valid || io.dpath.stalldx
+  io.dpath.killf := io.dpath.stallf
+  io.dpath.stalldx := Bool(false)
+  io.dpath.killdx := !id_valid || io.dpath.stalldx
+  io.dpath.wen := !io.dpath.killdx
+}
+
+class ALU extends Module with PCUParameters
+{
+  val io = new Bundle {
+    val in1 = Bits(INPUT, xprLen)
+    val in2 = Bits(INPUT, xprLen)
+    val out = Bits(OUTPUT, xprLen)
+  }
+
+  io.out := io.in1 + io.in2
+}
+
+class Datapath extends Module with PCUParameters
+{
+  val io = new Bundle {
+    val ctrl = new CtrlDpathIO().flip
     val imem = new InstMemIO
   }
 
   val pc = Reg(init = UInt(0, addrBits))
 
-  io.imem.req.valid := Bool(true)
+  when (!io.ctrl.stallf) {
+    pc := pc + UInt(4)
+  }
+
   io.imem.req.bits.addr := pc
+
+  val id_pc = Reg(UInt(width = addrBits))
+  val id_inst = Reg(Bits(width = coreInstBits))
+
+  when (!io.ctrl.killf) {
+    id_pc := pc
+    id_inst := io.imem.resp.bits.inst
+  }
+
+  class RegFile {
+    private val rf = Mem(Bits(width = xprLen), 31)
+    def read(addr: UInt) = Mux(addr != UInt(0), rf(~addr), Bits(0))
+    def write(addr: UInt, data: Bits) = {
+      when (addr != UInt(0)) {
+        rf(~addr) := data
+      }
+    }
+  }
+
+  val rf = new RegFile
+  val id_addr = Vec(id_inst(19, 15), id_inst(24,20))
+  val id_rs = id_addr.map(rf.read _)
+  val id_rd = id_inst(11, 7)
+
+  val alu = Module(new ALU)
+  alu.io.in1 := id_rs(0)
+  alu.io.in2 := id_rs(1)
+
+  val waddr = id_rd
+  val wdata = alu.io.out
+
+  when (io.ctrl.wen) {
+    rf.write(waddr, wdata)
+  }
+
+  io.ctrl.inst := id_inst
 }
 
-class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with PCUParameters {
+class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with PCUParameters
+{
   val io = new Bundle {
     val mem = new ScratchPadIO
   }
 
+  val ctrl = Module(new Control)
+  val dpath = Module(new Datapath)
   val ibuf = Module(new InstLineBuffer)
 
-  val dpath = Module(new Datapath)
+  ibuf.io.cpu <> ctrl.io.imem
   ibuf.io.cpu <> dpath.io.imem
+  ctrl.io.dpath <> dpath.io.ctrl
 
   io.mem <> ibuf.io.mem
 }
 
-class PCU extends Module with PCUParameters {
+class PCU extends Module with PCUParameters
+{
   val io = new Bundle {
     val core_reset = Bool(INPUT)
     val spad = new MemPipeIO().flip
