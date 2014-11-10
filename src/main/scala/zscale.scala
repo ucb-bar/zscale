@@ -6,7 +6,8 @@ import Chisel._
 import uncore._
 import rocket._
 import rocket.Util._
-import Instructions._
+import rocket.ALU._
+import rocket.Instructions._
 
 abstract trait PCUParameters extends UsesParameters
 {
@@ -227,7 +228,9 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val sel_alu1 = UInt(OUTPUT, 2)
   val sel_alu2 = UInt(OUTPUT, 3)
   val sel_imm = UInt(OUTPUT, 3)
+  val fn_alu = UInt(OUTPUT,SZ_ALU_FN)
   val wen = Bool(OUTPUT)
+  val mul_valid = Bool(OUTPUT)
 
   val stallf = Bool(OUTPUT)
   val killf = Bool(OUTPUT)
@@ -235,6 +238,8 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val killdx = Bool(OUTPUT)
 
   val inst = Bits(INPUT, coreInstBits)
+  val mul_ready = Bool(INPUT)
+  val clear_sb = Bool(INPUT)
 }
 
 class Control extends Module with PCUParameters
@@ -250,24 +255,45 @@ class Control extends Module with PCUParameters
   id_valid := io.imem.resp.valid
 
   val cs = DecodeLogic(io.dpath.inst,
-             //  val s_alu1  s_alu2  imm    wen
-             //   |  |       |       |      |
-             List(N, A1_X,   A2_X,   IMM_X, X), Array(
-      ADDI-> List(Y, A1_RS1, A2_IMM, IMM_I, Y),
-      ADD->  List(Y, A1_RS1, A2_RS2, IMM_X, Y)
+               //  val s_alu1  s_alu2  imm    fn        wen mul
+               //   |  |       |       |      |          |  |
+               List(N, A1_X,   A2_X,   IMM_X, FN_X,      X, X), Array(
+      ADDI->   List(Y, A1_RS1, A2_IMM, IMM_I, FN_ADD,    Y, N),
+      ADD->    List(Y, A1_RS1, A2_RS2, IMM_X, FN_ADD,    Y, N),
+      MUL->    List(Y, A1_X,   A2_X,   IMM_X, FN_MUL,    N, Y),
+      MULH->   List(Y, A1_X,   A2_X,   IMM_X, FN_MULH,   N, Y),
+      MULHU->  List(Y, A1_X,   A2_X,   IMM_X, FN_MULHU,  N, Y),
+      MULHSU-> List(Y, A1_X,   A2_X,   IMM_X, FN_MULHSU, N, Y),
+      DIV->    List(Y, A1_X,   A2_X,   IMM_X, FN_DIV,    N, Y),
+      DIVU->   List(Y, A1_X,   A2_X,   IMM_X, FN_DIVU,   N, Y),
+      REM->    List(Y, A1_X,   A2_X,   IMM_X, FN_REM,    N, Y),
+      REMU->   List(Y, A1_X,   A2_X,   IMM_X, FN_REMU,   N, Y)
     ))
 
-  val (id_val: Bool) :: id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: (id_wen: Bool) :: Nil = cs
+  val (id_inst_valid: Bool) :: id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: (id_mul_valid: Bool) :: Nil = cs
 
   io.dpath.sel_alu1 := id_sel_alu1
   io.dpath.sel_alu2 := id_sel_alu2
   io.dpath.sel_imm := id_sel_imm
+  io.dpath.fn_alu := id_fn_alu
   io.dpath.wen := !io.dpath.killdx && id_wen
+  io.dpath.mul_valid := !io.dpath.killdx && id_mul_valid
+
+  val sb_stall = Reg(init = Bool(false))
+
+  when (io.dpath.mul_valid && io.dpath.mul_ready) {
+    sb_stall := Bool(true)
+  }
+  when (io.dpath.clear_sb) {
+    sb_stall := Bool(false)
+  }
+
+  val mul_stall = id_valid && id_inst_valid && id_mul_valid && !io.dpath.mul_ready
 
   io.dpath.stallf := !io.imem.resp.valid || io.dpath.stalldx
   io.dpath.killf := io.dpath.stallf
-  io.dpath.stalldx := Bool(false)
-  io.dpath.killdx := !id_valid || io.dpath.stalldx
+  io.dpath.stalldx := sb_stall || mul_stall
+  io.dpath.killdx := !id_valid || !id_inst_valid || io.dpath.stalldx
 }
 
 class ALU extends Module with PCUParameters
@@ -353,14 +379,22 @@ class Datapath extends Module with PCUParameters
     ))
 
   val muldiv = Module(new MulDiv, {case XprLen => 32})
-  muldiv.io.req.valid := Bool(false)
+  muldiv.io.req.valid := io.ctrl.mul_valid
+  muldiv.io.req.bits.fn := io.ctrl.fn_alu
   muldiv.io.req.bits.dw := DW_64
+  muldiv.io.req.bits.in1 := id_rs(0)
+  muldiv.io.req.bits.in2 := id_rs(1)
+  muldiv.io.req.bits.tag := id_rd
+  muldiv.io.kill := Bool(false)
   muldiv.io.resp.ready := Bool(true)
+  io.ctrl.mul_ready := muldiv.io.req.ready
 
   val waddr = Mux(muldiv.io.resp.valid, muldiv.io.resp.bits.tag, id_rd)
   val wdata = Mux(muldiv.io.resp.valid, muldiv.io.resp.bits.data, alu.io.out)
 
-  when (io.ctrl.wen) {
+  io.ctrl.clear_sb := muldiv.io.resp.valid
+
+  when (io.ctrl.wen || muldiv.io.resp.valid) {
     rf.write(waddr, wdata)
   }
 
