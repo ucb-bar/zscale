@@ -443,8 +443,6 @@ class Datapath extends Module with PCUParameters
   val dmem_reg_lowaddr = Reg(UInt(width = log2Up(spadWordBytes)))
   val dmem_reg_rd = Reg(UInt(width = 5))
   val dmem_sgen = new StoreGen32(io.ctrl.mem_type, dmem_req_addr, id_rs(1))
-  // the reason why we can use id_* signals here
-  // is because we stall in decode stage until the response comes back
   val dmem_lgen = new LoadGen32(dmem_reg_mem_type, dmem_reg_lowaddr, io.dmem.resp.bits.data)
 
   when (io.ctrl.mem_valid && !io.ctrl.mem_rw) {
