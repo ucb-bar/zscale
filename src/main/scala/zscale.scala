@@ -21,6 +21,7 @@ abstract trait PCUParameters extends UsesParameters
   val spadDepth = spadSize / spadWordBytes
   val spadByteMaskBits = spadWordBytes
   val spadAddrBits = log2Up(spadDepth)
+  val spadTagBits = 1
 
   val xprLen = 32
   val addrBits = log2Up(spadSize)
@@ -61,11 +62,13 @@ class ScratchPadRequest extends Bundle with PCUParameters
   val rw = Bool()
   val wmask = Bits(width = spadByteMaskBits)
   val data = Bits(width = spadWidth)
+  val tag = UInt(width = spadTagBits)
 }
 
 class ScratchPadResponse extends Bundle with PCUParameters
 {
   val data = Bits(width = spadWidth)
+  val tag = UInt(width = spadTagBits)
 }
 
 class ScratchPadIO extends Bundle with PCUParameters
@@ -86,6 +89,7 @@ class ScratchPad extends Module with PCUParameters
 
   val ram = Mem(Bits(width = spadWidth), spadDepth, seqRead = true)
   val raddr = Reg(UInt())
+  val rtag = Reg(UInt())
   val rdata = Bits()
   val wen = Bool()
   val waddr = UInt()
@@ -112,11 +116,13 @@ class ScratchPad extends Module with PCUParameters
       wen := Bool(true)
     } .otherwise {
       raddr := io.cpu.req.bits.addr
+      rtag := io.cpu.req.bits.tag
     }
   }
 
   io.cpu.resp.valid := Reg(next = io.cpu.req.fire() && !io.cpu.req.bits.rw)
   io.cpu.resp.bits.data := rdata
+  io.cpu.resp.bits.tag := rtag
 
   val addr = Reg(UInt())
   val tag = Reg(UInt())
@@ -228,8 +234,11 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val sel_alu1 = UInt(OUTPUT, 2)
   val sel_alu2 = UInt(OUTPUT, 3)
   val sel_imm = UInt(OUTPUT, 3)
-  val fn_alu = UInt(OUTPUT,SZ_ALU_FN)
+  val fn_alu = UInt(OUTPUT, SZ_ALU_FN)
   val wen = Bool(OUTPUT)
+  val mem_valid = Bool(OUTPUT)
+  val mem_rw = Bool(OUTPUT)
+  val mem_type = UInt(OUTPUT, MT_SZ)
   val mul_valid = Bool(OUTPUT)
 
   val stallf = Bool(OUTPUT)
@@ -247,52 +256,71 @@ class Control extends Module with PCUParameters
   val io = new Bundle {
     val dpath = new CtrlDpathIO
     val imem = new InstMemIO
+    val dmem = new ScratchPadIO
   }
 
   io.imem.req.valid := Bool(true)
 
   val id_valid = Reg(init = Bool(false))
-  id_valid := io.imem.resp.valid
+
+  when (!io.dpath.stalldx) {
+    id_valid := !io.dpath.killf
+  }
 
   val cs = DecodeLogic(io.dpath.inst,
-               //  val s_alu1  s_alu2  imm    fn        wen mul
-               //   |  |       |       |      |          |  |
-               List(N, A1_X,   A2_X,   IMM_X, FN_X,      X, X), Array(
-      ADDI->   List(Y, A1_RS1, A2_IMM, IMM_I, FN_ADD,    Y, N),
-      ADD->    List(Y, A1_RS1, A2_RS2, IMM_X, FN_ADD,    Y, N),
-      MUL->    List(Y, A1_X,   A2_X,   IMM_X, FN_MUL,    N, Y),
-      MULH->   List(Y, A1_X,   A2_X,   IMM_X, FN_MULH,   N, Y),
-      MULHU->  List(Y, A1_X,   A2_X,   IMM_X, FN_MULHU,  N, Y),
-      MULHSU-> List(Y, A1_X,   A2_X,   IMM_X, FN_MULHSU, N, Y),
-      DIV->    List(Y, A1_X,   A2_X,   IMM_X, FN_DIV,    N, Y),
-      DIVU->   List(Y, A1_X,   A2_X,   IMM_X, FN_DIVU,   N, Y),
-      REM->    List(Y, A1_X,   A2_X,   IMM_X, FN_REM,    N, Y),
-      REMU->   List(Y, A1_X,   A2_X,   IMM_X, FN_REMU,   N, Y)
+               //  val s_alu1   s_alu2  imm    fn       wen sb mem rw mtype  mul
+               //   |  |        |       |      |          |  |  |  |  |      |
+               List(N, A1_X,    A2_X,   IMM_X, FN_X,      X, X, X, X, MT_X,  X), Array(
+      LUI->    List(Y, A1_ZERO, A2_IMM, IMM_U, FN_ADD,    Y, N, N, X, MT_X,  N),
+      ADDI->   List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    Y, N, N, X, MT_X,  N),
+      ADD->    List(Y, A1_RS1,  A2_RS2, IMM_X, FN_ADD,    Y, N, N, X, MT_X,  N),
+      LB->     List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_B,  N),
+      LBU->    List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_BU, N),
+      LH->     List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_H,  N),
+      LHU->    List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_HU, N),
+      LW->     List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_W,  N),
+      SB->     List(Y, A1_RS1,  A2_IMM, IMM_S, FN_ADD,    N, N, Y, Y, MT_B,  N),
+      SH->     List(Y, A1_RS1,  A2_IMM, IMM_S, FN_ADD,    N, N, Y, Y, MT_H,  N),
+      SW->     List(Y, A1_RS1,  A2_IMM, IMM_S, FN_ADD,    N, N, Y, Y, MT_W,  N),
+      MUL->    List(Y, A1_X,    A2_X,   IMM_X, FN_MUL,    N, Y, N, X, MT_X,  Y),
+      MULH->   List(Y, A1_X,    A2_X,   IMM_X, FN_MULH,   N, Y, N, X, MT_X,  Y),
+      MULHU->  List(Y, A1_X,    A2_X,   IMM_X, FN_MULHU,  N, Y, N, X, MT_X,  Y),
+      MULHSU-> List(Y, A1_X,    A2_X,   IMM_X, FN_MULHSU, N, Y, N, X, MT_X,  Y),
+      DIV->    List(Y, A1_X,    A2_X,   IMM_X, FN_DIV,    N, Y, N, X, MT_X,  Y),
+      DIVU->   List(Y, A1_X,    A2_X,   IMM_X, FN_DIVU,   N, Y, N, X, MT_X,  Y),
+      REM->    List(Y, A1_X,    A2_X,   IMM_X, FN_REM,    N, Y, N, X, MT_X,  Y),
+      REMU->   List(Y, A1_X,    A2_X,   IMM_X, FN_REMU,   N, Y, N, X, MT_X,  Y)
     ))
 
-  val (id_inst_valid: Bool) :: id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: (id_mul_valid: Bool) :: Nil = cs
+  val (id_inst_valid: Bool) :: id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: (id_set_sb: Bool) :: cs1 = cs
+  val (id_mem_valid: Bool) :: (id_mem_rw: Bool) :: id_mem_type :: (id_mul_valid: Bool) :: Nil = cs1
 
   io.dpath.sel_alu1 := id_sel_alu1
   io.dpath.sel_alu2 := id_sel_alu2
   io.dpath.sel_imm := id_sel_imm
   io.dpath.fn_alu := id_fn_alu
   io.dpath.wen := !io.dpath.killdx && id_wen
+  io.dpath.mem_valid := !io.dpath.killdx && id_mem_valid
+  io.dpath.mem_rw := id_mem_rw
+  io.dpath.mem_type := id_mem_type
   io.dpath.mul_valid := !io.dpath.killdx && id_mul_valid
+  io.dmem.req.valid := io.dpath.mem_valid
 
   val sb_stall = Reg(init = Bool(false))
 
-  when (io.dpath.mul_valid && io.dpath.mul_ready) {
+  when (!io.dpath.killdx && id_set_sb) {
     sb_stall := Bool(true)
   }
   when (io.dpath.clear_sb) {
     sb_stall := Bool(false)
   }
 
+  val mem_stall = id_valid && id_inst_valid && id_mem_valid && !io.dmem.req.ready
   val mul_stall = id_valid && id_inst_valid && id_mul_valid && !io.dpath.mul_ready
 
   io.dpath.stallf := !io.imem.resp.valid || io.dpath.stalldx
-  io.dpath.killf := io.dpath.stallf
-  io.dpath.stalldx := sb_stall || mul_stall
+  io.dpath.killf := !io.imem.resp.valid
+  io.dpath.stalldx := sb_stall || mem_stall || mul_stall
   io.dpath.killdx := !id_valid || !id_inst_valid || io.dpath.stalldx
 }
 
@@ -312,6 +340,7 @@ class Datapath extends Module with PCUParameters
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip
     val imem = new InstMemIO
+    val dmem = new ScratchPadIO
   }
 
   val pc = Reg(init = UInt(0, addrBits))
@@ -325,7 +354,8 @@ class Datapath extends Module with PCUParameters
   val id_pc = Reg(UInt(width = addrBits))
   val id_inst = Reg(Bits(width = coreInstBits))
 
-  when (!io.ctrl.killf) {
+  // !io.ctrl.killf is a power optimization (clock-gating)
+  when (!io.ctrl.stalldx && !io.ctrl.killf) {
     id_pc := pc
     id_inst := io.imem.resp.bits.inst
   }
@@ -367,6 +397,7 @@ class Datapath extends Module with PCUParameters
   val id_rd = id_inst(11, 7)
   val id_imm = imm(io.ctrl.sel_imm, id_inst)
 
+  // ALU
   val alu = Module(new ALU)
   alu.io.in1 := MuxLookup(io.ctrl.sel_alu1, SInt(0), Seq(
       A1_RS1 -> id_rs(0).toSInt,
@@ -378,6 +409,56 @@ class Datapath extends Module with PCUParameters
       A2_IMM -> id_imm
     ))
 
+  // DMEM
+  class StoreGen32(typ: Bits, addr: Bits, dat: Bits) {
+    val byte = typ === MT_B || typ === MT_BU
+    val half = typ === MT_H || typ === MT_HU
+    val word = typ === MT_W
+    val nw = log2Up(spadWordBytes)
+    def mask =
+      Mux(byte, Bits(  1) <<     addr(nw-1,0),
+      Mux(half, Bits(  3) << Cat(addr(nw-1,1), Bits(0,1)),
+      Mux(word, Bits( 15) << Cat(addr(nw-1,2), Bits(0,2)),
+                Fill(nw, Bool(true)))))
+    def data =
+      Mux(byte, Fill(nw*4, dat( 7,0)),
+      Mux(half, Fill(nw*2, dat(15,0)),
+                Fill(nw,   dat(31,0))))
+  }
+
+  class LoadGen32(typ: Bits, addr: Bits, dat: Bits) {
+    val t = new StoreGen32(typ, addr, dat)
+    val sign = typ === MT_B || typ === MT_H || typ === MT_W
+
+    val word = MuxLookup(addr(t.nw-1,2), Bits(0, 32),
+      (0 until spadWordBytes/4).map( i => (UInt(i) -> dat(32*(i+1)-1, 32*i)) ))
+    val halfShift = Mux(addr(1), word(31,16), word(15,0))
+    val half = Cat(Mux(t.half, Fill(16, sign && halfShift(15)), word(31,16)), halfShift)
+    val byteShift = Mux(addr(0), half(15,8), half(7,0))
+    val byte = Cat(Mux(t.byte, Fill(24, sign && byteShift(7)), half(31,8)), byteShift)
+  }
+
+  val dmem_req_addr = alu.io.out
+  val dmem_reg_mem_type = Reg(UInt(width = MT_SZ))
+  val dmem_reg_lowaddr = Reg(UInt(width = log2Up(spadWordBytes)))
+  val dmem_reg_rd = Reg(UInt(width = 5))
+  val dmem_sgen = new StoreGen32(io.ctrl.mem_type, dmem_req_addr, id_rs(1))
+  // the reason why we can use id_* signals here
+  // is because we stall in decode stage until the response comes back
+  val dmem_lgen = new LoadGen32(dmem_reg_mem_type, dmem_reg_lowaddr, io.dmem.resp.bits.data)
+
+  when (io.ctrl.mem_valid && !io.ctrl.mem_rw) {
+    dmem_reg_mem_type := io.ctrl.mem_type
+    dmem_reg_lowaddr := dmem_req_addr
+    dmem_reg_rd := id_rd
+  }
+
+  io.dmem.req.bits.addr := dmem_req_addr >> UInt(log2Up(spadWordBytes))
+  io.dmem.req.bits.rw := io.ctrl.mem_rw
+  io.dmem.req.bits.wmask := dmem_sgen.mask
+  io.dmem.req.bits.data := dmem_sgen.data
+
+  // MUL/DIV
   val muldiv = Module(new MulDiv, {case XprLen => 32})
   muldiv.io.req.valid := io.ctrl.mul_valid
   muldiv.io.req.bits.fn := io.ctrl.fn_alu
@@ -387,18 +468,47 @@ class Datapath extends Module with PCUParameters
   muldiv.io.req.bits.tag := id_rd
   muldiv.io.kill := Bool(false)
   muldiv.io.resp.ready := Bool(true)
-  io.ctrl.mul_ready := muldiv.io.req.ready
 
-  val waddr = Mux(muldiv.io.resp.valid, muldiv.io.resp.bits.tag, id_rd)
-  val wdata = Mux(muldiv.io.resp.valid, muldiv.io.resp.bits.data, alu.io.out)
+  // WB
+  val waddr = MuxCase(
+    id_rd, Array(
+      io.dmem.resp.valid -> dmem_reg_rd,
+      muldiv.io.resp.valid -> muldiv.io.resp.bits.tag
+    ))
+  val wdata = MuxCase(
+    alu.io.out, Array(
+      io.dmem.resp.valid -> dmem_lgen.byte,
+      muldiv.io.resp.valid -> muldiv.io.resp.bits.data
+    ))
 
-  io.ctrl.clear_sb := muldiv.io.resp.valid
-
-  when (io.ctrl.wen || muldiv.io.resp.valid) {
+  when (io.ctrl.wen || io.dmem.resp.valid || muldiv.io.resp.valid) {
     rf.write(waddr, wdata)
   }
 
+  // to control
   io.ctrl.inst := id_inst
+  io.ctrl.mul_ready := muldiv.io.req.ready
+  io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
+}
+
+class MemArbiter extends Module with PCUParameters
+{
+  val io = new Bundle {
+    val imem = new ScratchPadIO().flip
+    val dmem = new ScratchPadIO().flip
+    val mem = new ScratchPadIO
+  }
+
+  io.imem.req.ready := io.mem.req.ready && !io.dmem.req.valid
+  io.dmem.req.ready := io.mem.req.ready
+  io.mem.req.valid := io.imem.req.valid || io.dmem.req.valid
+  io.mem.req.bits := Mux(io.dmem.req.valid, io.dmem.req.bits, io.imem.req.bits)
+  io.mem.req.bits.tag := io.dmem.req.valid
+
+  io.imem.resp.valid := io.mem.resp.valid && (io.mem.resp.bits.tag === Bits(0))
+  io.dmem.resp.valid := io.mem.resp.valid && (io.mem.resp.bits.tag === Bits(1))
+  io.imem.resp.bits := io.mem.resp.bits
+  io.dmem.resp.bits := io.mem.resp.bits
 }
 
 class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with PCUParameters
@@ -410,12 +520,16 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with P
   val ctrl = Module(new Control)
   val dpath = Module(new Datapath)
   val ibuf = Module(new InstLineBuffer)
+  val arb = Module(new MemArbiter)
 
   ibuf.io.cpu <> ctrl.io.imem
   ibuf.io.cpu <> dpath.io.imem
   ctrl.io.dpath <> dpath.io.ctrl
 
-  io.mem <> ibuf.io.mem
+  arb.io.imem <> ibuf.io.mem
+  arb.io.dmem <> ctrl.io.dmem
+  arb.io.dmem <> dpath.io.dmem
+  io.mem <> arb.io.mem
 }
 
 class PCU extends Module with PCUParameters
@@ -428,8 +542,8 @@ class PCU extends Module with PCUParameters
   }
 
   val core = Module(new Core(resetSignal = io.core_reset))
-
   val spad = Module(new ScratchPad)
+
   spad.io.cpu <> core.io.mem
   spad.io.mem <> io.spad
   
