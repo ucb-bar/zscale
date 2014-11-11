@@ -179,6 +179,7 @@ class InstMemIO extends Bundle with PCUParameters
 {
   val req = Valid(new InstMemReq)
   val resp = Valid(new InstMemResp).flip
+  val invalidate = Decoupled(Bool())
 }
 
 class InstLineBuffer extends Module with PCUParameters
@@ -210,6 +211,11 @@ class InstLineBuffer extends Module with PCUParameters
   // front side of line buffer
   io.cpu.resp.valid := service_hit
   io.cpu.resp.bits.inst := Mux1H(req_inst_onehot, line)
+  io.cpu.invalidate.ready := (state === s_idle)
+
+  when (io.cpu.invalidate.fire()) {
+    tag_valid := Bool(false)
+  }
 
   // back side of line buffer
   when (service_nohit && io.cpu.req.valid && io.mem.req.ready) {
@@ -231,6 +237,8 @@ class InstLineBuffer extends Module with PCUParameters
 
 class CtrlDpathIO extends Bundle with PCUParameters
 {
+  val j = Bool(OUTPUT)
+  val br = Bool(OUTPUT)
   val sel_alu1 = UInt(OUTPUT, 2)
   val sel_alu2 = UInt(OUTPUT, 3)
   val sel_imm = UInt(OUTPUT, 3)
@@ -247,6 +255,7 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val killdx = Bool(OUTPUT)
 
   val inst = Bits(INPUT, coreInstBits)
+  val br_taken = Bool(INPUT)
   val mul_ready = Bool(INPUT)
   val clear_sb = Bool(INPUT)
 }
@@ -268,45 +277,88 @@ class Control extends Module with PCUParameters
   }
 
   val cs = DecodeLogic(io.dpath.inst,
-               //  val s_alu1   s_alu2  imm    fn       wen sb mem rw mtype  mul
-               //   |  |        |       |      |          |  |  |  |  |      |
-               List(N, A1_X,    A2_X,   IMM_X, FN_X,      X, X, X, X, MT_X,  X), Array(
-      LUI->    List(Y, A1_ZERO, A2_IMM, IMM_U, FN_ADD,    Y, N, N, X, MT_X,  N),
-      ADDI->   List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    Y, N, N, X, MT_X,  N),
-      ADD->    List(Y, A1_RS1,  A2_RS2, IMM_X, FN_ADD,    Y, N, N, X, MT_X,  N),
-      LB->     List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_B,  N),
-      LBU->    List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_BU, N),
-      LH->     List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_H,  N),
-      LHU->    List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_HU, N),
-      LW->     List(Y, A1_RS1,  A2_IMM, IMM_I, FN_ADD,    N, Y, Y, N, MT_W,  N),
-      SB->     List(Y, A1_RS1,  A2_IMM, IMM_S, FN_ADD,    N, N, Y, Y, MT_B,  N),
-      SH->     List(Y, A1_RS1,  A2_IMM, IMM_S, FN_ADD,    N, N, Y, Y, MT_H,  N),
-      SW->     List(Y, A1_RS1,  A2_IMM, IMM_S, FN_ADD,    N, N, Y, Y, MT_W,  N),
-      MUL->    List(Y, A1_X,    A2_X,   IMM_X, FN_MUL,    N, Y, N, X, MT_X,  Y),
-      MULH->   List(Y, A1_X,    A2_X,   IMM_X, FN_MULH,   N, Y, N, X, MT_X,  Y),
-      MULHU->  List(Y, A1_X,    A2_X,   IMM_X, FN_MULHU,  N, Y, N, X, MT_X,  Y),
-      MULHSU-> List(Y, A1_X,    A2_X,   IMM_X, FN_MULHSU, N, Y, N, X, MT_X,  Y),
-      DIV->    List(Y, A1_X,    A2_X,   IMM_X, FN_DIV,    N, Y, N, X, MT_X,  Y),
-      DIVU->   List(Y, A1_X,    A2_X,   IMM_X, FN_DIVU,   N, Y, N, X, MT_X,  Y),
-      REM->    List(Y, A1_X,    A2_X,   IMM_X, FN_REM,    N, Y, N, X, MT_X,  Y),
-      REMU->   List(Y, A1_X,    A2_X,   IMM_X, FN_REMU,   N, Y, N, X, MT_X,  Y)
+                //  val j br f.i si s_alu1   s_alu2   imm     fn       wen sb mem rw mtype  mul
+                //   |  |  |  |  |  |        |        |       |          |  |  |  |  |      |
+                List(N, X, X, X, X, A1_X,    A2_X,    IMM_X,  FN_X,      X, X, X, X, MT_X,  X), Array(
+      LUI->     List(Y, N, N, N, N, A1_ZERO, A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      AUIPC->   List(Y, N, N, N, N, A1_PC,   A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
+
+      JAL->     List(Y, Y, N, N, N, A1_PC,   A2_FOUR, IMM_UJ, FN_ADD,    Y, N, N, X, MT_X,  N),
+      JALR->    List(Y, Y, N, N, N, A1_PC,   A2_FOUR, IMM_I,  FN_ADD,    Y, N, N, X, MT_X,  N),
+
+      BEQ->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SEQ,    N, N, N, X, MT_X,  N),
+      BNE->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SNE,    N, N, N, X, MT_X,  N),
+      BLT->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SLT,    N, N, N, X, MT_X,  N),
+      BLTU->    List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SLTU,   N, N, N, X, MT_X,  N),
+      BGE->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SGE,    N, N, N, X, MT_X,  N),
+      BGEU->    List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SGEU,   N, N, N, X, MT_X,  N),
+
+      LB->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_B,  N),
+      LBU->     List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_BU, N),
+      LH->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_H,  N),
+      LHU->     List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_HU, N),
+      LW->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_W,  N),
+      SB->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_B,  N),
+      SH->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_H,  N),
+      SW->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_W,  N),
+
+      ADDI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      SLTI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_SLT,    Y, N, N, X, MT_X,  N),
+      SLTIU->   List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_SLTU,   Y, N, N, X, MT_X,  N),
+      XORI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_XOR,    Y, N, N, X, MT_X,  N),
+      ORI->     List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_OR,     Y, N, N, X, MT_X,  N),
+      ANDI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_AND,    Y, N, N, X, MT_X,  N),
+      SLLI->    List(Y, N, N, N, Y, A1_RS1,  A2_IMM,  IMM_I,  FN_SL,     Y, N, N, X, MT_X,  N),
+      SRLI->    List(Y, N, N, N, Y, A1_RS1,  A2_IMM,  IMM_I,  FN_SR,     Y, N, N, X, MT_X,  N),
+      SRAI->    List(Y, N, N, N, Y, A1_RS1,  A2_IMM,  IMM_I,  FN_SRA,    Y, N, N, X, MT_X,  N),
+
+      ADD->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      SUB->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SUB,    Y, N, N, X, MT_X,  N),
+      SLL->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SL,     Y, N, N, X, MT_X,  N),
+      SLT->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SLT,    Y, N, N, X, MT_X,  N),
+      SLTU->    List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SLTU,   Y, N, N, X, MT_X,  N),
+      XOR->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_XOR,    Y, N, N, X, MT_X,  N),
+      SRL->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SR,     Y, N, N, X, MT_X,  N),
+      SRA->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SRA,    Y, N, N, X, MT_X,  N),
+      OR->      List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_OR,     Y, N, N, X, MT_X,  N),
+      AND->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_AND,    Y, N, N, X, MT_X,  N),
+
+      FENCE->   List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_X,      N, N, N, X, MT_X,  N), // nop
+      FENCE_I-> List(Y, N, N, Y, N, A1_X,    A2_X,    IMM_X,  FN_X,      N, N, N, X, MT_X,  N),
+
+      MUL->     List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MUL,    N, Y, N, X, MT_X,  Y),
+      MULH->    List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MULH,   N, Y, N, X, MT_X,  Y),
+      MULHU->   List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MULHU,  N, Y, N, X, MT_X,  Y),
+      MULHSU->  List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MULHSU, N, Y, N, X, MT_X,  Y),
+      DIV->     List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_DIV,    N, Y, N, X, MT_X,  Y),
+      DIVU->    List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_DIVU,   N, Y, N, X, MT_X,  Y),
+      REM->     List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_REM,    N, Y, N, X, MT_X,  Y),
+      REMU->    List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_REMU,   N, Y, N, X, MT_X,  Y)
     ))
 
-  val (id_inst_valid: Bool) :: id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: (id_set_sb: Bool) :: cs1 = cs
-  val (id_mem_valid: Bool) :: (id_mem_rw: Bool) :: id_mem_type :: (id_mul_valid: Bool) :: Nil = cs1
+  val (_id_inst_valid: Bool) :: (id_j: Bool) :: (id_br: Bool) :: (id_fence_i: Bool) :: (id_shift_imm: Bool) :: cs1 = cs
+  val id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: cs2 = cs1
+  val (id_set_sb: Bool) :: (id_mem_valid: Bool) :: (id_mem_rw: Bool) :: id_mem_type :: (id_mul_valid: Bool) :: Nil = cs2
 
+  val sb_stall = Reg(init = Bool(false))
+  val id_shift_valid = !id_shift_imm || io.dpath.inst(25) === Bits(0) // checking whether shamt's bit 6 is a zero
+  val id_inst_valid = _id_inst_valid && id_shift_valid // this is because we're using RV64I's shift instruction format
+  val id_ok = !sb_stall && id_valid && id_inst_valid
+
+  io.dpath.j := id_ok && id_j
+  io.dpath.br := id_ok && id_br
   io.dpath.sel_alu1 := id_sel_alu1
   io.dpath.sel_alu2 := id_sel_alu2
   io.dpath.sel_imm := id_sel_imm
   io.dpath.fn_alu := id_fn_alu
-  io.dpath.wen := !io.dpath.killdx && id_wen
-  io.dpath.mem_valid := !io.dpath.killdx && id_mem_valid
+  io.dpath.wen := id_ok && id_wen
+  io.dpath.mem_valid := id_ok && id_mem_valid
   io.dpath.mem_rw := id_mem_rw
   io.dpath.mem_type := id_mem_type
-  io.dpath.mul_valid := !io.dpath.killdx && id_mul_valid
-  io.dmem.req.valid := io.dpath.mem_valid
+  io.dpath.mul_valid := id_ok && id_mul_valid
 
-  val sb_stall = Reg(init = Bool(false))
+  io.imem.invalidate.valid := id_ok && id_fence_i
+  io.dmem.req.valid := io.dpath.mem_valid
 
   when (!io.dpath.killdx && id_set_sb) {
     sb_stall := Bool(true)
@@ -315,24 +367,53 @@ class Control extends Module with PCUParameters
     sb_stall := Bool(false)
   }
 
-  val mem_stall = id_valid && id_inst_valid && id_mem_valid && !io.dmem.req.ready
-  val mul_stall = id_valid && id_inst_valid && id_mul_valid && !io.dpath.mul_ready
+  val fence_stall = io.imem.invalidate.valid && !io.imem.invalidate.ready
+  val mem_stall = io.dmem.req.valid && !io.dmem.req.ready
+  val mul_stall = io.dpath.mul_valid && !io.dpath.mul_ready
 
-  io.dpath.stallf := !io.imem.resp.valid || io.dpath.stalldx
-  io.dpath.killf := !io.imem.resp.valid
-  io.dpath.stalldx := sb_stall || mem_stall || mul_stall
-  io.dpath.killdx := !id_valid || !id_inst_valid || io.dpath.stalldx
+  io.dpath.stallf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.stalldx
+  io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.j || io.dpath.br && io.dpath.br_taken
+  io.dpath.stalldx := sb_stall || fence_stall || mem_stall || mul_stall
+  io.dpath.killdx := !id_ok || io.dpath.stalldx
 }
 
+// partially copied from Rocket's ALU
 class ALU extends Module with PCUParameters
 {
   val io = new Bundle {
+    val fn = Bits(INPUT, SZ_ALU_FN)
     val in1 = Bits(INPUT, xprLen)
     val in2 = Bits(INPUT, xprLen)
     val out = Bits(OUTPUT, xprLen)
+    val adder_out = Bits(OUTPUT, xprLen)
   }
 
-  io.out := io.in1 + io.in2
+  // ADD, SUB
+  val sum = io.in1 + Mux(isSub(io.fn), -io.in2, io.in2)
+
+  // SLT, SLTU
+  val cmp = cmpInverted(io.fn) ^
+    Mux(cmpEq(io.fn), sum === UInt(0),
+    Mux(io.in1(xprLen-1) === io.in2(xprLen-1), sum(xprLen-1),
+    Mux(cmpUnsigned(io.fn), io.in2(xprLen-1), io.in1(xprLen-1))))
+
+  // SLL, SRL, SRA
+  val shamt = io.in2(4,0)
+  val shin_r = io.in1
+  val shin = Mux(io.fn === FN_SR  || io.fn === FN_SRA, shin_r, Reverse(shin_r))
+  val shout_r = (Cat(isSub(io.fn) & shin(xprLen-1), shin).toSInt >> shamt)(xprLen-1,0)
+  val shout_l = Reverse(shout_r)
+
+  io.out :=
+    Mux(io.fn === FN_ADD || io.fn === FN_SUB,  sum,
+    Mux(io.fn === FN_SR  || io.fn === FN_SRA,  shout_r,
+    Mux(io.fn === FN_SL,                       shout_l,
+    Mux(io.fn === FN_AND,                      io.in1 & io.in2,
+    Mux(io.fn === FN_OR,                       io.in1 | io.in2,
+    Mux(io.fn === FN_XOR,                      io.in1 ^ io.in2,
+                /* all comparisons */          cmp))))))
+
+  io.adder_out := sum
 }
 
 class Datapath extends Module with PCUParameters
@@ -344,9 +425,11 @@ class Datapath extends Module with PCUParameters
   }
 
   val pc = Reg(init = UInt(0, addrBits))
+  val id_br_target = UInt()
 
   when (!io.ctrl.stallf) {
-    pc := pc + UInt(4)
+    pc := Mux(io.ctrl.j || io.ctrl.br && io.ctrl.br_taken, id_br_target,
+              pc + UInt(4))
   }
 
   io.imem.req.bits.addr := pc
@@ -399,6 +482,7 @@ class Datapath extends Module with PCUParameters
 
   // ALU
   val alu = Module(new ALU)
+  alu.io.fn := io.ctrl.fn_alu
   alu.io.in1 := MuxLookup(io.ctrl.sel_alu1, SInt(0), Seq(
       A1_RS1 -> id_rs(0).toSInt,
       A1_PC -> id_pc.toSInt
@@ -408,6 +492,10 @@ class Datapath extends Module with PCUParameters
       A2_RS2 -> id_rs(1).toSInt,
       A2_IMM -> id_imm
     ))
+
+  // BRANCH TARGET
+  // jalr only takes rs1, jump and branches take pc
+  id_br_target := Mux(io.ctrl.j && io.ctrl.sel_imm === IMM_I, id_rs(0), id_pc) + id_imm
 
   // DMEM
   class StoreGen32(typ: Bits, addr: Bits, dat: Bits) {
@@ -438,7 +526,7 @@ class Datapath extends Module with PCUParameters
     val byte = Cat(Mux(t.byte, Fill(24, sign && byteShift(7)), half(31,8)), byteShift)
   }
 
-  val dmem_req_addr = alu.io.out
+  val dmem_req_addr = alu.io.adder_out
   val dmem_reg_mem_type = Reg(UInt(width = MT_SZ))
   val dmem_reg_lowaddr = Reg(UInt(width = log2Up(spadWordBytes)))
   val dmem_reg_rd = Reg(UInt(width = 5))
@@ -485,6 +573,7 @@ class Datapath extends Module with PCUParameters
 
   // to control
   io.ctrl.inst := id_inst
+  io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
 }
