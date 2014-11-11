@@ -448,10 +448,20 @@ class Datapath extends Module with PCUParameters
   // this one doesn't have a write->read bypass
   class RegFile {
     private val rf = Mem(Bits(width = xprLen), 31)
-    def read(addr: UInt) = Mux(addr != UInt(0), rf(~addr), Bits(0))
-    def write(addr: UInt, data: Bits) = {
+    private val reads = collection.mutable.ArrayBuffer[(UInt,UInt)]()
+    private var canRead = true
+    def read(addr: UInt) = {
+      require(canRead)
+      reads += addr -> UInt()
+      reads.last._2 := Mux(addr != UInt(0), rf(~addr), Bits(0))
+      reads.last._2
+    }
+    def write(addr: UInt, data: UInt) = {
+      canRead = false
       when (addr != UInt(0)) {
         rf(~addr) := data
+        for ((raddr, rdata) <- reads)
+          when (addr === raddr) { rdata := data }
       }
     }
   }
@@ -557,6 +567,7 @@ class Datapath extends Module with PCUParameters
   muldiv.io.resp.ready := Bool(true)
 
   // WB
+  val wen = io.ctrl.wen || io.dmem.resp.valid || muldiv.io.resp.valid
   val waddr = MuxCase(
     id_rd, Array(
       io.dmem.resp.valid -> dmem_reg_rd,
@@ -568,8 +579,18 @@ class Datapath extends Module with PCUParameters
       muldiv.io.resp.valid -> muldiv.io.resp.bits.data
     ))
 
-  when (io.ctrl.wen || io.dmem.resp.valid || muldiv.io.resp.valid) {
-    rf.write(waddr, wdata)
+  val reg_wen = Reg(init = Bool(false))
+  val reg_waddr = Reg(UInt())
+  val reg_wdata = Reg(Bits())
+
+  reg_wen := wen
+  when (wen) {
+    reg_waddr := waddr
+    reg_wdata := wdata
+  }
+
+  when (reg_wen) {
+    rf.write(reg_waddr, reg_wdata)
   }
 
   // to control
