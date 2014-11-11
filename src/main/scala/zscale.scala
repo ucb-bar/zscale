@@ -371,8 +371,9 @@ class Control extends Module with PCUParameters
   val mem_stall = io.dmem.req.valid && !io.dmem.req.ready
   val mul_stall = io.dpath.mul_valid && !io.dpath.mul_ready
 
-  io.dpath.stallf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.stalldx
-  io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.j || io.dpath.br && io.dpath.br_taken
+  val br_taken = io.dpath.br && io.dpath.br_taken
+  io.dpath.stallf := !io.imem.resp.valid && !br_taken || io.imem.invalidate.valid || io.dpath.stalldx
+  io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.j || br_taken
   io.dpath.stalldx := sb_stall || fence_stall || mem_stall || mul_stall
   io.dpath.killdx := !id_ok || io.dpath.stalldx
 }
