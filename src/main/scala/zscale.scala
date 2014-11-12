@@ -9,7 +9,7 @@ import rocket.Util._
 import rocket.ALU._
 import rocket.Instructions._
 
-abstract trait PCUParameters extends UsesParameters
+abstract trait ZScaleParameters extends UsesParameters
 {
   val memAddrBits = params(MIFAddrBits)
   val memDataBits = params(MIFDataBits)
@@ -27,9 +27,41 @@ abstract trait PCUParameters extends UsesParameters
   val addrBits = log2Up(spadSize)
   val coreInstBits = params(CoreInstBits)
   val coreInstBytes = coreInstBits / 8
+
+  val nSCR = params(HTIFNSCR)
+  require(log2Up(nSCR) <= 8)
+
+  val csrList = collection.mutable.ArrayBuffer[Int]()
+
+  csrList += CSRs.cycle
+  csrList += CSRs.cycleh
+  csrList += CSRs.time
+  csrList += CSRs.timeh
+  csrList += CSRs.instret
+  csrList += CSRs.instreth
+
+  csrList += CSRs.sup0
+  csrList += CSRs.sup1
+  csrList += CSRs.epc
+  csrList += CSRs.badvaddr
+  csrList += CSRs.count
+  csrList += CSRs.compare
+  csrList += CSRs.evec
+  csrList += CSRs.cause
+  csrList += CSRs.status
+  csrList += CSRs.hartid
+  csrList += CSRs.impl
+  csrList += CSRs.tohost
+  csrList += CSRs.fromhost
+
+  val CSRBaseForSCRs = 0x400
+
+  for (i <- 0 until nSCR) {
+    csrList += (CSRBaseForSCRs + i)
+  }
 }
 
-class MemIOSplitter extends Module with PCUParameters
+class MemIOSplitter extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val hub = new MemPipeIO().flip
@@ -56,7 +88,7 @@ class MemIOSplitter extends Module with PCUParameters
   io.hub.resp.bits := Mux(io.spad.resp.valid, io.spad.resp.bits, io.serdes.resp.bits)
 }
 
-class ScratchPadRequest extends Bundle with PCUParameters
+class ScratchPadRequest extends Bundle with ZScaleParameters
 {
   val addr = UInt(width = spadAddrBits)
   val rw = Bool()
@@ -65,19 +97,19 @@ class ScratchPadRequest extends Bundle with PCUParameters
   val tag = UInt(width = spadTagBits)
 }
 
-class ScratchPadResponse extends Bundle with PCUParameters
+class ScratchPadResponse extends Bundle with ZScaleParameters
 {
   val data = Bits(width = spadWidth)
   val tag = UInt(width = spadTagBits)
 }
 
-class ScratchPadIO extends Bundle with PCUParameters
+class ScratchPadIO extends Bundle with ZScaleParameters
 {
   val req = Decoupled(new ScratchPadRequest)
   val resp = Valid(new ScratchPadResponse).flip
 }
 
-class ScratchPad extends Module with PCUParameters
+class ScratchPad extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val cpu = new ScratchPadIO().flip
@@ -165,24 +197,24 @@ class ScratchPad extends Module with PCUParameters
   io.mem.resp.bits.tag := tag
 }
 
-class InstMemReq extends Bundle with PCUParameters
+class InstMemReq extends Bundle with ZScaleParameters
 {
   val addr = UInt(width = addrBits)
 }
 
-class InstMemResp extends Bundle with PCUParameters
+class InstMemResp extends Bundle with ZScaleParameters
 {
   val inst = Bits(width = coreInstBits)
 }
 
-class InstMemIO extends Bundle with PCUParameters
+class InstMemIO extends Bundle with ZScaleParameters
 {
   val req = Valid(new InstMemReq)
   val resp = Valid(new InstMemResp).flip
   val invalidate = Decoupled(Bool())
 }
 
-class InstLineBuffer extends Module with PCUParameters
+class InstLineBuffer extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val cpu = new InstMemIO().flip
@@ -235,40 +267,7 @@ class InstLineBuffer extends Module with PCUParameters
   }
 }
 
-object PCUCSRs
-{
-  val nscr = 140
-  require(log2Up(nscr) <= 8)
-
-  val all = collection.mutable.ArrayBuffer[Int]()
-
-  all += CSRs.cycle
-  all += CSRs.cycleh
-  all += CSRs.time
-  all += CSRs.timeh
-  all += CSRs.instret
-  all += CSRs.instreth
-
-  all += CSRs.sup0
-  all += CSRs.sup1
-  all += CSRs.epc
-  all += CSRs.badvaddr
-  all += CSRs.count
-  all += CSRs.compare
-  all += CSRs.evec
-  all += CSRs.cause
-  all += CSRs.status
-  all += CSRs.hartid
-  all += CSRs.impl
-  all += CSRs.tohost
-  all += CSRs.fromhost
-
-  for (i <- 0 until nscr) {
-    all += (0x400 + i)
-  }
-}
-
-class CtrlDpathIO extends Bundle with PCUParameters
+class CtrlDpathIO extends Bundle with ZScaleParameters
 {
   val j = Bool(OUTPUT)
   val br = Bool(OUTPUT)
@@ -311,7 +310,7 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val mul_stall = Bool(OUTPUT)
 }
 
-class Control extends Module with PCUParameters
+class Control extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val dpath = new CtrlDpathIO
@@ -413,7 +412,7 @@ class Control extends Module with PCUParameters
 
   val id_csr_addr = io.dpath.inst(31, 20)
   val id_raddr1 = io.dpath.inst(19, 15)
-  val legal_csrs = collection.mutable.LinkedHashSet(PCUCSRs.all:_*)
+  val legal_csrs = collection.mutable.LinkedHashSet(csrList:_*)
   val is_legal_csr = Vec.tabulate(1 << id_csr_addr.getWidth)(i => Bool(legal_csrs contains i))
   val id_csr_en = id_csr != CSR.N
   val id_csr_wen = id_raddr1 != UInt(0) || !Vec(CSR.S, CSR.C).contains(id_csr)
@@ -498,7 +497,7 @@ class Control extends Module with PCUParameters
 }
 
 // copied and modified from Rocket's datapath
-class ALU extends Module with PCUParameters
+class ALU extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val fn = Bits(INPUT, SZ_ALU_FN)
@@ -536,7 +535,7 @@ class ALU extends Module with PCUParameters
   io.adder_out := sum
 }
 
-class Datapath extends Module with PCUParameters
+class Datapath extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip
@@ -742,7 +741,7 @@ class Datapath extends Module with PCUParameters
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
 
-  printf("PCU: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
+  printf("ZScale: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
     csr.io.time(31, 0), !io.ctrl.killdx,
     Reg(init=45,next=Mux(!io.imem.resp.valid, 73, 45)), // I -
     Reg(init=45,next=Mux(io.ctrl.br && io.ctrl.br_taken, 66, 45)), // B -
@@ -761,7 +760,7 @@ class Datapath extends Module with PCUParameters
     id_inst, id_inst)
 }
 
-class CSRFile extends Module with PCUParameters
+class CSRFile extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val rw = new Bundle {
@@ -831,10 +830,10 @@ class CSRFile extends Module with PCUParameters
 
   // helper
   val decoded_addr = {
-    val map = for ((v, i) <- PCUCSRs.all.zipWithIndex)
+    val map = for ((v, i) <- csrList.zipWithIndex)
       yield v -> UInt(BigInt(1) << i)
     val out = ROM(map)(io.rw.addr)
-    Map((PCUCSRs.all zip out.toBools):_*)
+    Map((csrList zip out.toBools):_*)
   }
 
   // read CSRs
@@ -862,8 +861,8 @@ class CSRFile extends Module with PCUParameters
   )
 
   // SCRs mapped into the CSR space
-  for (i <- 0 until PCUCSRs.nscr) {
-    read_mapping += (0x400 + i -> io.scr.rdata(i))
+  for (i <- 0 until nSCR) {
+    read_mapping += (CSRBaseForSCRs + i -> io.scr.rdata(i))
   }
 
   io.rw.rdata := Mux1H(for ((k, v) <- read_mapping) yield decoded_addr(k) -> v)
@@ -905,7 +904,7 @@ class CSRFile extends Module with PCUParameters
   }
 }
 
-class MemArbiter extends Module with PCUParameters
+class MemArbiter extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val imem = new ScratchPadIO().flip
@@ -925,7 +924,7 @@ class MemArbiter extends Module with PCUParameters
   io.dmem.resp.bits := io.mem.resp.bits
 }
 
-class ZScale(resetSignal: Bool = null) extends Module(_reset = resetSignal) with PCUParameters
+class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZScaleParameters
 {
   val io = new Bundle {
     val mem = new ScratchPadIO
@@ -952,7 +951,7 @@ class ZScale(resetSignal: Bool = null) extends Module(_reset = resetSignal) with
   io.mem <> arb.io.mem
 }
 
-class PCU extends Module with PCUParameters
+class ZScale extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val core_reset = Bool(INPUT)
@@ -961,7 +960,7 @@ class PCU extends Module with PCUParameters
     val scr_ready = Bool(INPUT)
   }
 
-  val core = Module(new ZScale(resetSignal = io.core_reset))
+  val core = Module(new Core(resetSignal = io.core_reset))
   val spad = Module(new ScratchPad)
 
   spad.io.cpu <> core.io.mem
