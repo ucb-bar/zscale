@@ -51,6 +51,8 @@ abstract trait ZScaleParameters extends UsesParameters
   csrList += CSRs.status
   csrList += CSRs.hartid
   csrList += CSRs.impl
+  csrList += CSRs.send_ipi
+  csrList += CSRs.clear_ipi
   csrList += CSRs.tohost
   csrList += CSRs.fromhost
 
@@ -316,6 +318,7 @@ class Control extends Module with ZScaleParameters
     val dpath = new CtrlDpathIO
     val imem = new InstMemIO
     val dmem = new ScratchPadIO
+    val host = new HTIFIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
   }
@@ -475,7 +478,7 @@ class Control extends Module with ZScaleParameters
     sb_stall := Bool(false)
   }
 
-  val scr_stall = io.dpath.csr_en && !io.scr_ready
+  val scr_stall = io.dpath.csr_en && (!io.scr_ready || !io.host.ipi_req.ready)
   val imem_stall = io.imem.invalidate.valid && !io.imem.invalidate.ready
   val dmem_stall = io.dmem.req.valid && !io.dmem.req.ready
   val mul_stall = io.dpath.mul_valid && !io.dpath.mul_ready
@@ -541,6 +544,7 @@ class Datapath extends Module with ZScaleParameters
     val ctrl = new CtrlDpathIO().flip
     val imem = new InstMemIO
     val dmem = new ScratchPadIO
+    val host = new HTIFIO
     val scr = new SCRIO
   }
 
@@ -630,6 +634,7 @@ class Datapath extends Module with ZScaleParameters
 
   // CSR
   val csr_operand = alu.io.adder_out
+  csr.io.host <> io.host
   csr.io.rw.addr := id_inst(31, 20)
   csr.io.rw.cmd := io.ctrl.csr_cmd
   csr.io.rw.wdata :=
@@ -741,8 +746,8 @@ class Datapath extends Module with ZScaleParameters
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
 
-  printf("ZScale: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
-    csr.io.time(31, 0), !io.ctrl.killdx,
+  printf("Z%d: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
+    io.host.id, csr.io.time(31, 0), !io.ctrl.killdx,
     Reg(init=45,next=Mux(!io.imem.resp.valid, 73, 45)), // I -
     Reg(init=45,next=Mux(io.ctrl.br && io.ctrl.br_taken, 66, 45)), // B -
     Reg(init=45,next=Mux(io.ctrl.j, 74, 45)), // J -
@@ -760,9 +765,11 @@ class Datapath extends Module with ZScaleParameters
     id_inst, id_inst)
 }
 
+// TODO: merge with Rocket's CSRFile
 class CSRFile extends Module with ZScaleParameters
 {
   val io = new Bundle {
+    val host = new HTIFIO
     val rw = new Bundle {
       val addr = UInt(INPUT, 12)
       val cmd = Bits(INPUT, CSR.SZ)
@@ -794,8 +801,47 @@ class CSRFile extends Module with ZScaleParameters
   val reg_compare = Reg(UInt(width = 32))
   val reg_evec = Reg(UInt(width = xprLen))
   val reg_cause = Reg(Bits(width = xprLen))
+  val reg_tohost = Reg(init = Bits(0, xprLen))
+  val reg_fromhost = Reg(init = Bits(0, xprLen))
 
   val r_irq_timer = Reg(init=Bool(false))
+  val r_irq_ipi = Reg(init=Bool(true))
+
+  val cpu_req_valid = io.rw.cmd != CSR.N
+  val host_pcr_req_valid = Reg(Bool()) // don't reset
+  val host_pcr_req_fire = host_pcr_req_valid && !cpu_req_valid
+  val host_pcr_rep_valid = Reg(Bool()) // don't reset
+  val host_pcr_bits = Reg(io.host.pcr_req.bits)
+  io.host.pcr_req.ready := !host_pcr_req_valid && !host_pcr_rep_valid
+  io.host.pcr_rep.valid := host_pcr_rep_valid
+  io.host.pcr_rep.bits := host_pcr_bits.data
+  when (io.host.pcr_req.fire()) {
+    host_pcr_req_valid := true
+    host_pcr_bits := io.host.pcr_req.bits
+  }
+  when (host_pcr_req_fire) {
+    host_pcr_req_valid := false
+    host_pcr_rep_valid := true
+    host_pcr_bits.data := io.rw.rdata
+  }
+  when (io.host.pcr_rep.fire()) { host_pcr_rep_valid := false }
+
+  // helper
+  val addr = Mux(cpu_req_valid, io.rw.addr, host_pcr_bits.addr | 0x500)
+  val decoded_addr = {
+    val map = for ((v, i) <- csrList.zipWithIndex)
+      yield v -> UInt(BigInt(1) << i)
+    val out = ROM(map)(addr)
+    Map((csrList zip out.toBools):_*)
+  }
+
+  io.host.ipi_req.valid := cpu_req_valid && decoded_addr(CSRs.send_ipi)
+  io.host.ipi_req.bits := io.rw.wdata
+  io.host.ipi_rep.ready := Bool(true)
+  when (io.host.ipi_rep.valid) { r_irq_ipi := Bool(true) }
+
+  val wen = cpu_req_valid || host_pcr_req_fire && host_pcr_bits.rw
+  val wdata = Mux(cpu_req_valid, io.rw.wdata, host_pcr_bits.data)
 
   when (io.xcpt) {
     reg_status.s := Bool(true)
@@ -823,18 +869,10 @@ class CSRFile extends Module with ZScaleParameters
   io.status.s64 := false
   io.status.vm := false
   io.status.zero := 0
-  io.status.ip := Cat(r_irq_timer, io.scr.rdata(4).orR, Bool(false), Bool(false),
-                      Bool(false), Bool(false),         Bool(false), Bool(false))
+  io.status.ip := Cat(r_irq_timer, reg_fromhost.orR, r_irq_ipi,   Bool(false),
+                      Bool(false), Bool(false),      Bool(false), Bool(false))
   io.evec := Mux(io.xcpt, reg_evec, reg_epc)
   io.time := reg_time
-
-  // helper
-  val decoded_addr = {
-    val map = for ((v, i) <- csrList.zipWithIndex)
-      yield v -> UInt(BigInt(1) << i)
-    val out = ROM(map)(io.rw.addr)
-    Map((csrList zip out.toBools):_*)
-  }
 
   // read CSRs
   val read_mapping = collection.mutable.LinkedHashMap[Int,Bits](
@@ -854,10 +892,10 @@ class CSRFile extends Module with ZScaleParameters
     CSRs.evec -> reg_evec,
     CSRs.cause -> reg_cause,
     CSRs.status -> io.status.toBits,
-    CSRs.hartid -> UInt(0),
-    CSRs.impl -> UInt(3),
-    CSRs.tohost -> io.scr.rdata(3),
-    CSRs.fromhost -> io.scr.rdata(4)
+    CSRs.hartid -> io.host.id,
+    CSRs.impl -> UInt(3), // ZScale
+    CSRs.tohost -> reg_tohost,
+    CSRs.fromhost -> reg_fromhost
   )
 
   // SCRs mapped into the CSR space
@@ -874,8 +912,8 @@ class CSRFile extends Module with ZScaleParameters
   scr_wen := Bool(false)
   scr_waddr := UInt(0, log2Up(params(HTIFNSCR)))
 
-  val wen = io.rw.cmd != CSR.N
-  val wdata = io.rw.wdata
+  when (host_pcr_req_fire && !host_pcr_bits.rw && decoded_addr(CSRs.tohost)) { reg_tohost := UInt(0) }
+
   when (wen) {
     when (decoded_addr(CSRs.status)) { reg_status := new Status().fromBits(wdata) }
     when (decoded_addr(CSRs.sup0)) { reg_sup0 := wdata }
@@ -884,8 +922,9 @@ class CSRFile extends Module with ZScaleParameters
     when (decoded_addr(CSRs.evec)) { reg_evec := wdata }
     when (decoded_addr(CSRs.count)) { reg_time := wdata }
     when (decoded_addr(CSRs.compare)) { reg_compare := wdata; r_irq_timer := Bool(false) }
-    when (decoded_addr(CSRs.tohost)) { when (io.scr.rdata(3) === Bits(0)) { scr_wen := Bool(true); scr_waddr := UInt(3) } }
-    when (decoded_addr(CSRs.fromhost)) { scr_wen := Bool(true); scr_waddr := UInt(4) }
+    when (decoded_addr(CSRs.clear_ipi)) { r_irq_ipi := wdata(0) }
+    when (decoded_addr(CSRs.tohost)) { when (reg_tohost === Bits(0) || host_pcr_req_fire) { reg_tohost := wdata } }
+    when (decoded_addr(CSRs.fromhost)) { when (reg_fromhost === Bits(0) || !host_pcr_req_fire) { reg_fromhost := wdata } }
 
     // SCRs mapped into the CSR space
     when (io.rw.addr(11, 8) === UInt(4)) { scr_wen := Bool(true); scr_waddr := io.rw.addr }
@@ -928,6 +967,7 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
 {
   val io = new Bundle {
     val mem = new ScratchPadIO
+    val host = new HTIFIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
   }
@@ -941,31 +981,36 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
   ibuf.io.cpu <> dpath.io.imem
   ctrl.io.dpath <> dpath.io.ctrl
 
-  ctrl.io.scr_ready := io.scr_ready
-  io.scr <> ctrl.io.scr
-  io.scr <> dpath.io.scr
-
   arb.io.imem <> ibuf.io.mem
   arb.io.dmem <> ctrl.io.dmem
   arb.io.dmem <> dpath.io.dmem
   io.mem <> arb.io.mem
+
+  ctrl.io.host <> io.host
+  dpath.io.host <> io.host
+
+  ctrl.io.scr_ready := io.scr_ready
+  io.scr <> ctrl.io.scr
+  io.scr <> dpath.io.scr
 }
 
+// TODO: change scr write port into Decoupled
 class ZScale extends Module with ZScaleParameters
 {
   val io = new Bundle {
-    val core_reset = Bool(INPUT)
     val spad = new MemPipeIO().flip
+    val host = new HTIFIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
   }
 
-  val core = Module(new Core(resetSignal = io.core_reset))
+  val core = Module(new Core(resetSignal = io.host.reset))
   val spad = Module(new ScratchPad)
 
   spad.io.cpu <> core.io.mem
   spad.io.mem <> io.spad
 
+  core.io.host <> io.host
   io.scr <> core.io.scr
   core.io.scr_ready := io.scr_ready
 }
