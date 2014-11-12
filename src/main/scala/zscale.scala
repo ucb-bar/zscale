@@ -817,7 +817,7 @@ class MemArbiter extends Module with PCUParameters
   io.dmem.resp.bits := io.mem.resp.bits
 }
 
-class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with PCUParameters
+class ZScale(resetSignal: Bool = null) extends Module(_reset = resetSignal) with PCUParameters
 {
   val io = new Bundle {
     val mem = new ScratchPadIO
@@ -853,7 +853,7 @@ class PCU extends Module with PCUParameters
     val scr_ready = Bool(INPUT)
   }
 
-  val core = Module(new Core(resetSignal = io.core_reset))
+  val core = Module(new ZScale(resetSignal = io.core_reset))
   val spad = Module(new ScratchPad)
 
   spad.io.cpu <> core.io.mem
