@@ -285,6 +285,14 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val br_taken = Bool(INPUT)
   val mul_ready = Bool(INPUT)
   val clear_sb = Bool(INPUT)
+
+  // for logging purposes
+  val invalidate = Bool(OUTPUT)
+  val sb_stall = Bool(OUTPUT)
+  val scr_stall = Bool(OUTPUT)
+  val imem_stall = Bool(OUTPUT)
+  val dmem_stall = Bool(OUTPUT)
+  val mul_stall = Bool(OUTPUT)
 }
 
 class Control extends Module with PCUParameters
@@ -426,6 +434,14 @@ class Control extends Module with PCUParameters
   io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.j || br_taken
   io.dpath.stalldx := sb_stall || scr_stall || imem_stall || dmem_stall || mul_stall
   io.dpath.killdx := !id_ok || io.dpath.stalldx
+
+  // for logging purposes
+  io.dpath.invalidate := io.imem.invalidate.valid
+  io.dpath.sb_stall := sb_stall
+  io.dpath.scr_stall := scr_stall
+  io.dpath.imem_stall := imem_stall
+  io.dpath.dmem_stall := dmem_stall
+  io.dpath.mul_stall := mul_stall
 }
 
 // copied and modified from Rocket's datapath
@@ -663,6 +679,20 @@ class Datapath extends Module with PCUParameters
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
+
+  printf("PCU: %d [%d] [%s%s%s%s|%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] inst=[%x] DASM(%x)\n",
+    csr.io.time(31, 0), !io.ctrl.killdx,
+    Reg(init=45,next=Mux(!io.imem.resp.valid, 73, 45)), // I -
+    Reg(init=45,next=Mux(io.ctrl.br && io.ctrl.br_taken, 66, 45)), // B -
+    Reg(init=45,next=Mux(io.ctrl.j, 74, 45)), // J -
+    Reg(init=45,next=Mux(io.ctrl.invalidate, 86, 45)), // V -
+    Mux(io.ctrl.sb_stall, 83, 45), // S -
+    Mux(io.ctrl.scr_stall, 67, 45), // C -
+    Mux(io.ctrl.imem_stall, 73, 45), // I -
+    Mux(io.ctrl.dmem_stall, 68, 45), // D -
+    Mux(io.ctrl.mul_stall, 77, 45), // M -
+    id_pc, waddr, wdata, wen, id_addr(0), id_rs(0), id_addr(1), id_rs(1),
+    id_inst, id_inst)
 }
 
 class CSRFile extends Module with PCUParameters
