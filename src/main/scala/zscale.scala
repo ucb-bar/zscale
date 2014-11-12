@@ -237,7 +237,11 @@ class InstLineBuffer extends Module with PCUParameters
 
 object PCUCSRs
 {
+  val nscr = 140
+  require(log2Up(nscr) <= 8)
+
   val all = collection.mutable.ArrayBuffer[Int]()
+
   all += CSRs.cycle
   all += CSRs.cycleh
   all += CSRs.time
@@ -258,6 +262,10 @@ object PCUCSRs
   all += CSRs.impl
   all += CSRs.tohost
   all += CSRs.fromhost
+
+  for (i <- 0 until nscr) {
+    all += (0x400 + i)
+  }
 }
 
 class CtrlDpathIO extends Bundle with PCUParameters
@@ -753,6 +761,11 @@ class CSRFile extends Module with PCUParameters
     CSRs.fromhost -> io.scr.rdata(4)
   )
 
+  // SCRs mapped into the CSR space
+  for (i <- 0 until PCUCSRs.nscr) {
+    read_mapping += (0x400 + i -> io.scr.rdata(i))
+  }
+
   io.rw.rdata := Mux1H(for ((k, v) <- read_mapping) yield decoded_addr(k) -> v)
 
   val scr_wen = Bool()
@@ -772,6 +785,9 @@ class CSRFile extends Module with PCUParameters
     when (decoded_addr(CSRs.compare)) { reg_compare := wdata; r_irq_timer := Bool(false) }
     when (decoded_addr(CSRs.tohost)) { when (io.scr.rdata(3) === Bits(0)) { scr_wen := Bool(true); scr_waddr := UInt(3) } }
     when (decoded_addr(CSRs.fromhost)) { scr_wen := Bool(true); scr_waddr := UInt(4) }
+
+    // SCRs mapped into the CSR space
+    when (io.rw.addr(11, 8) === UInt(4)) { scr_wen := Bool(true); scr_waddr := io.rw.addr }
   }
 
   io.scr.wen := scr_wen
