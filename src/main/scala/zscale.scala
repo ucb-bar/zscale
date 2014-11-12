@@ -235,6 +235,31 @@ class InstLineBuffer extends Module with PCUParameters
   }
 }
 
+object PCUCSRs
+{
+  val all = collection.mutable.ArrayBuffer[Int]()
+  all += CSRs.cycle
+  all += CSRs.cycleh
+  all += CSRs.time
+  all += CSRs.timeh
+  all += CSRs.instret
+  all += CSRs.instreth
+
+  all += CSRs.sup0
+  all += CSRs.sup1
+  all += CSRs.epc
+  all += CSRs.badvaddr
+  all += CSRs.count
+  all += CSRs.compare
+  all += CSRs.evec
+  all += CSRs.cause
+  all += CSRs.status
+  all += CSRs.hartid
+  all += CSRs.impl
+  all += CSRs.tohost
+  all += CSRs.fromhost
+}
+
 class CtrlDpathIO extends Bundle with PCUParameters
 {
   val j = Bool(OUTPUT)
@@ -244,6 +269,8 @@ class CtrlDpathIO extends Bundle with PCUParameters
   val sel_imm = UInt(OUTPUT, 3)
   val fn_alu = UInt(OUTPUT, SZ_ALU_FN)
   val wen = Bool(OUTPUT)
+  val csr_en = Bool(OUTPUT)
+  val csr_cmd = UInt(OUTPUT, CSR.SZ)
   val mem_valid = Bool(OUTPUT)
   val mem_rw = Bool(OUTPUT)
   val mem_type = UInt(OUTPUT, MT_SZ)
@@ -266,6 +293,8 @@ class Control extends Module with PCUParameters
     val dpath = new CtrlDpathIO
     val imem = new InstMemIO
     val dmem = new ScratchPadIO
+    val scr = new SCRIO
+    val scr_ready = Bool(INPUT)
   }
 
   io.imem.req.valid := Bool(true)
@@ -277,72 +306,90 @@ class Control extends Module with PCUParameters
   }
 
   val cs = DecodeLogic(io.dpath.inst,
-                //  val j br f.i si s_alu1   s_alu2   imm     fn       wen sb mem rw mtype  mul
-                //   |  |  |  |  |  |        |        |       |          |  |  |  |  |      |
-                List(N, X, X, X, X, A1_X,    A2_X,    IMM_X,  FN_X,      X, X, X, X, MT_X,  X), Array(
-      LUI->     List(Y, N, N, N, N, A1_ZERO, A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
-      AUIPC->   List(Y, N, N, N, N, A1_PC,   A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
+                //  val j br f.i si csr    s_alu1   s_alu2   imm     fn       wen sb mem rw mtype  mul
+                //   |  |  |  |  |  |      |        |        |       |          |  |  |  |  |      |
+                List(N, X, X, X, X, CSR.X, A1_X,    A2_X,    IMM_X,  FN_X,      X, X, X, X, MT_X,  X), Array(
+      LUI->     List(Y, N, N, N, N, CSR.N, A1_ZERO, A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      AUIPC->   List(Y, N, N, N, N, CSR.N, A1_PC,   A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
 
-      JAL->     List(Y, Y, N, N, N, A1_PC,   A2_FOUR, IMM_UJ, FN_ADD,    Y, N, N, X, MT_X,  N),
-      JALR->    List(Y, Y, N, N, N, A1_PC,   A2_FOUR, IMM_I,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      JAL->     List(Y, Y, N, N, N, CSR.N, A1_PC,   A2_FOUR, IMM_UJ, FN_ADD,    Y, N, N, X, MT_X,  N),
+      JALR->    List(Y, Y, N, N, N, CSR.N, A1_PC,   A2_FOUR, IMM_I,  FN_ADD,    Y, N, N, X, MT_X,  N),
 
-      BEQ->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SEQ,    N, N, N, X, MT_X,  N),
-      BNE->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SNE,    N, N, N, X, MT_X,  N),
-      BLT->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SLT,    N, N, N, X, MT_X,  N),
-      BLTU->    List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SLTU,   N, N, N, X, MT_X,  N),
-      BGE->     List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SGE,    N, N, N, X, MT_X,  N),
-      BGEU->    List(Y, N, Y, N, N, A1_RS1,  A2_RS2,  IMM_SB, FN_SGEU,   N, N, N, X, MT_X,  N),
+      BEQ->     List(Y, N, Y, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_SB, FN_SEQ,    N, N, N, X, MT_X,  N),
+      BNE->     List(Y, N, Y, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_SB, FN_SNE,    N, N, N, X, MT_X,  N),
+      BLT->     List(Y, N, Y, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_SB, FN_SLT,    N, N, N, X, MT_X,  N),
+      BLTU->    List(Y, N, Y, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_SB, FN_SLTU,   N, N, N, X, MT_X,  N),
+      BGE->     List(Y, N, Y, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_SB, FN_SGE,    N, N, N, X, MT_X,  N),
+      BGEU->    List(Y, N, Y, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_SB, FN_SGEU,   N, N, N, X, MT_X,  N),
 
-      LB->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_B,  N),
-      LBU->     List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_BU, N),
-      LH->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_H,  N),
-      LHU->     List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_HU, N),
-      LW->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_W,  N),
-      SB->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_B,  N),
-      SH->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_H,  N),
-      SW->      List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_W,  N),
+      LB->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_B,  N),
+      LBU->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_BU, N),
+      LH->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_H,  N),
+      LHU->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_HU, N),
+      LW->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    N, Y, Y, N, MT_W,  N),
+      SB->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_B,  N),
+      SH->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_H,  N),
+      SW->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_S,  FN_ADD,    N, N, Y, Y, MT_W,  N),
 
-      ADDI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    Y, N, N, X, MT_X,  N),
-      SLTI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_SLT,    Y, N, N, X, MT_X,  N),
-      SLTIU->   List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_SLTU,   Y, N, N, X, MT_X,  N),
-      XORI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_XOR,    Y, N, N, X, MT_X,  N),
-      ORI->     List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_OR,     Y, N, N, X, MT_X,  N),
-      ANDI->    List(Y, N, N, N, N, A1_RS1,  A2_IMM,  IMM_I,  FN_AND,    Y, N, N, X, MT_X,  N),
-      SLLI->    List(Y, N, N, N, Y, A1_RS1,  A2_IMM,  IMM_I,  FN_SL,     Y, N, N, X, MT_X,  N),
-      SRLI->    List(Y, N, N, N, Y, A1_RS1,  A2_IMM,  IMM_I,  FN_SR,     Y, N, N, X, MT_X,  N),
-      SRAI->    List(Y, N, N, N, Y, A1_RS1,  A2_IMM,  IMM_I,  FN_SRA,    Y, N, N, X, MT_X,  N),
+      ADDI->    List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      SLTI->    List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_SLT,    Y, N, N, X, MT_X,  N),
+      SLTIU->   List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_SLTU,   Y, N, N, X, MT_X,  N),
+      XORI->    List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_XOR,    Y, N, N, X, MT_X,  N),
+      ORI->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_OR,     Y, N, N, X, MT_X,  N),
+      ANDI->    List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_AND,    Y, N, N, X, MT_X,  N),
+      SLLI->    List(Y, N, N, N, Y, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_SL,     Y, N, N, X, MT_X,  N),
+      SRLI->    List(Y, N, N, N, Y, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_SR,     Y, N, N, X, MT_X,  N),
+      SRAI->    List(Y, N, N, N, Y, CSR.N, A1_RS1,  A2_IMM,  IMM_I,  FN_SRA,    Y, N, N, X, MT_X,  N),
 
-      ADD->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_ADD,    Y, N, N, X, MT_X,  N),
-      SUB->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SUB,    Y, N, N, X, MT_X,  N),
-      SLL->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SL,     Y, N, N, X, MT_X,  N),
-      SLT->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SLT,    Y, N, N, X, MT_X,  N),
-      SLTU->    List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SLTU,   Y, N, N, X, MT_X,  N),
-      XOR->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_XOR,    Y, N, N, X, MT_X,  N),
-      SRL->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SR,     Y, N, N, X, MT_X,  N),
-      SRA->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_SRA,    Y, N, N, X, MT_X,  N),
-      OR->      List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_OR,     Y, N, N, X, MT_X,  N),
-      AND->     List(Y, N, N, N, N, A1_RS1,  A2_RS2,  IMM_X,  FN_AND,    Y, N, N, X, MT_X,  N),
+      ADD->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      SUB->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_SUB,    Y, N, N, X, MT_X,  N),
+      SLL->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_SL,     Y, N, N, X, MT_X,  N),
+      SLT->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_SLT,    Y, N, N, X, MT_X,  N),
+      SLTU->    List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_SLTU,   Y, N, N, X, MT_X,  N),
+      XOR->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_XOR,    Y, N, N, X, MT_X,  N),
+      SRL->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_SR,     Y, N, N, X, MT_X,  N),
+      SRA->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_SRA,    Y, N, N, X, MT_X,  N),
+      OR->      List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_OR,     Y, N, N, X, MT_X,  N),
+      AND->     List(Y, N, N, N, N, CSR.N, A1_RS1,  A2_RS2,  IMM_X,  FN_AND,    Y, N, N, X, MT_X,  N),
 
-      FENCE->   List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_X,      N, N, N, X, MT_X,  N), // nop
-      FENCE_I-> List(Y, N, N, Y, N, A1_X,    A2_X,    IMM_X,  FN_X,      N, N, N, X, MT_X,  N),
+      FENCE->   List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_X,      N, N, N, X, MT_X,  N), // nop
+      FENCE_I-> List(Y, N, N, Y, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_X,      N, N, N, X, MT_X,  N),
 
-      MUL->     List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MUL,    N, Y, N, X, MT_X,  Y),
-      MULH->    List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MULH,   N, Y, N, X, MT_X,  Y),
-      MULHU->   List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MULHU,  N, Y, N, X, MT_X,  Y),
-      MULHSU->  List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_MULHSU, N, Y, N, X, MT_X,  Y),
-      DIV->     List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_DIV,    N, Y, N, X, MT_X,  Y),
-      DIVU->    List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_DIVU,   N, Y, N, X, MT_X,  Y),
-      REM->     List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_REM,    N, Y, N, X, MT_X,  Y),
-      REMU->    List(Y, N, N, N, N, A1_X,    A2_X,    IMM_X,  FN_REMU,   N, Y, N, X, MT_X,  Y)
+      CSRRW->   List(Y, N, N, N, N, CSR.W, A1_RS1,  A2_ZERO, IMM_X,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      CSRRS->   List(Y, N, N, N, N, CSR.S, A1_RS1,  A2_ZERO, IMM_X,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      CSRRC->   List(Y, N, N, N, N, CSR.C, A1_RS1,  A2_ZERO, IMM_X,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      CSRRWI->  List(Y, N, N, N, N, CSR.W, A1_ZERO, A2_IMM,  IMM_Z,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      CSRRSI->  List(Y, N, N, N, N, CSR.S, A1_ZERO, A2_IMM,  IMM_Z,  FN_ADD,    Y, N, N, X, MT_X,  N),
+      CSRRCI->  List(Y, N, N, N, N, CSR.C, A1_ZERO, A2_IMM,  IMM_Z,  FN_ADD,    Y, N, N, X, MT_X,  N),
+
+      MUL->     List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_MUL,    N, Y, N, X, MT_X,  Y),
+      MULH->    List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_MULH,   N, Y, N, X, MT_X,  Y),
+      MULHU->   List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_MULHU,  N, Y, N, X, MT_X,  Y),
+      MULHSU->  List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_MULHSU, N, Y, N, X, MT_X,  Y),
+      DIV->     List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_DIV,    N, Y, N, X, MT_X,  Y),
+      DIVU->    List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_DIVU,   N, Y, N, X, MT_X,  Y),
+      REM->     List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_REM,    N, Y, N, X, MT_X,  Y),
+      REMU->    List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_REMU,   N, Y, N, X, MT_X,  Y)
     ))
 
-  val (_id_inst_valid: Bool) :: (id_j: Bool) :: (id_br: Bool) :: (id_fence_i: Bool) :: (id_shift_imm: Bool) :: cs1 = cs
+  val (_id_inst_valid: Bool) :: (id_j: Bool) :: (id_br: Bool) :: (id_fence_i: Bool) :: (id_shift_imm: Bool) :: id_csr :: cs1 = cs
   val id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: cs2 = cs1
   val (id_set_sb: Bool) :: (id_mem_valid: Bool) :: (id_mem_rw: Bool) :: id_mem_type :: (id_mul_valid: Bool) :: Nil = cs2
 
   val sb_stall = Reg(init = Bool(false))
+
+  // we need this because we're using RV64I's shift instruction format
   val id_shift_valid = !id_shift_imm || io.dpath.inst(25) === Bits(0) // checking whether shamt's bit 6 is a zero
-  val id_inst_valid = _id_inst_valid && id_shift_valid // this is because we're using RV64I's shift instruction format
+
+  val id_csr_addr = io.dpath.inst(31, 20)
+  val id_raddr1 = io.dpath.inst(19, 15)
+  val legal_csrs = collection.mutable.LinkedHashSet(PCUCSRs.all:_*)
+  val is_legal_csr = Vec.tabulate(1 << id_csr_addr.getWidth)(i => Bool(legal_csrs contains i))
+  val id_csr_en = id_csr != CSR.N
+  val id_csr_wen = id_raddr1 != UInt(0) || !Vec(CSR.S, CSR.C).contains(id_csr)
+  val id_csr_valid = !id_csr_en || is_legal_csr(id_csr_addr)
+
+  val id_inst_valid = _id_inst_valid && id_shift_valid && id_csr_valid
   val id_ok = !sb_stall && id_valid && id_inst_valid
 
   io.dpath.j := id_ok && id_j
@@ -352,6 +399,8 @@ class Control extends Module with PCUParameters
   io.dpath.sel_imm := id_sel_imm
   io.dpath.fn_alu := id_fn_alu
   io.dpath.wen := id_ok && id_wen
+  io.dpath.csr_en := id_ok && id_csr_en
+  io.dpath.csr_cmd := Mux(id_ok, id_csr, CSR.N)
   io.dpath.mem_valid := id_ok && id_mem_valid
   io.dpath.mem_rw := id_mem_rw
   io.dpath.mem_type := id_mem_type
@@ -367,18 +416,19 @@ class Control extends Module with PCUParameters
     sb_stall := Bool(false)
   }
 
-  val fence_stall = io.imem.invalidate.valid && !io.imem.invalidate.ready
-  val mem_stall = io.dmem.req.valid && !io.dmem.req.ready
+  val scr_stall = io.dpath.csr_en && !io.scr_ready
+  val imem_stall = io.imem.invalidate.valid && !io.imem.invalidate.ready
+  val dmem_stall = io.dmem.req.valid && !io.dmem.req.ready
   val mul_stall = io.dpath.mul_valid && !io.dpath.mul_ready
 
   val br_taken = io.dpath.br && io.dpath.br_taken
   io.dpath.stallf := !io.imem.resp.valid && !br_taken || io.imem.invalidate.valid || io.dpath.stalldx
   io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.j || br_taken
-  io.dpath.stalldx := sb_stall || fence_stall || mem_stall || mul_stall
+  io.dpath.stalldx := sb_stall || scr_stall || imem_stall || dmem_stall || mul_stall
   io.dpath.killdx := !id_ok || io.dpath.stalldx
 }
 
-// partially copied from Rocket's ALU
+// copied and modified from Rocket's datapath
 class ALU extends Module with PCUParameters
 {
   val io = new Bundle {
@@ -423,9 +473,10 @@ class Datapath extends Module with PCUParameters
     val ctrl = new CtrlDpathIO().flip
     val imem = new InstMemIO
     val dmem = new ScratchPadIO
+    val scr = new SCRIO
   }
 
-  val pc = Reg(init = UInt(0, addrBits))
+  val pc = Reg(init = UInt(0, xprLen))
   val id_br_target = UInt()
 
   when (!io.ctrl.stallf) {
@@ -435,7 +486,7 @@ class Datapath extends Module with PCUParameters
 
   io.imem.req.bits.addr := pc
 
-  val id_pc = Reg(UInt(width = addrBits))
+  val id_pc = Reg(UInt(width = xprLen))
   val id_inst = Reg(Bits(width = coreInstBits))
 
   // !io.ctrl.killf is a power optimization (clock-gating)
@@ -444,8 +495,7 @@ class Datapath extends Module with PCUParameters
     id_inst := io.imem.resp.bits.inst
   }
 
-  // similar to Rocket's RF
-  // this one doesn't have a write->read bypass
+  // copied from Rocket's datapath
   class RegFile {
     private val rf = Mem(Bits(width = xprLen), 31)
     private val reads = collection.mutable.ArrayBuffer[(UInt,UInt)]()
@@ -507,6 +557,20 @@ class Datapath extends Module with PCUParameters
   // BRANCH TARGET
   // jalr only takes rs1, jump and branches take pc
   id_br_target := Mux(io.ctrl.j && io.ctrl.sel_imm === IMM_I, id_rs(0), id_pc) + id_imm
+
+  // CSR
+  val csr_operand = alu.io.adder_out
+  val csr = Module(new CSRFile)
+
+  csr.io.rw.addr := id_inst(31, 20)
+  csr.io.rw.cmd := io.ctrl.csr_cmd
+  csr.io.rw.wdata :=
+    Mux(io.ctrl.csr_cmd === CSR.S, csr.io.rw.rdata | csr_operand,
+    Mux(io.ctrl.csr_cmd === CSR.C, csr.io.rw.rdata & ~csr_operand,
+        csr_operand))
+
+  io.scr <> csr.io.scr
+  csr.io.retire := !io.ctrl.killdx
 
   // DMEM
   class StoreGen32(typ: Bits, addr: Bits, dat: Bits) {
@@ -575,6 +639,7 @@ class Datapath extends Module with PCUParameters
     ))
   val wdata = MuxCase(
     alu.io.out, Array(
+      io.ctrl.csr_en -> csr.io.rw.rdata,
       io.dmem.resp.valid -> dmem_lgen.byte,
       muldiv.io.resp.valid -> muldiv.io.resp.bits.data
     ))
@@ -598,6 +663,92 @@ class Datapath extends Module with PCUParameters
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
+}
+
+class CSRFile extends Module with PCUParameters
+{
+  val io = new Bundle {
+    val rw = new Bundle {
+      val addr = UInt(INPUT, 12)
+      val cmd = Bits(INPUT, CSR.SZ)
+      val rdata = Bits(OUTPUT, xprLen)
+      val wdata = Bits(INPUT, xprLen)
+    }
+    val scr = new SCRIO
+    val retire = Bool(INPUT)
+
+    val time = UInt(OUTPUT, 64)
+  }
+
+  val reg_time = WideCounter(64)
+  val reg_instret = WideCounter(64, io.retire)
+
+  val reg_sup0 = Reg(Bits(width = xprLen))
+  val reg_sup1 = Reg(Bits(width = xprLen))
+  val reg_epc = Reg(UInt(width = xprLen))
+  val reg_badvaddr = Reg(UInt(width = xprLen))
+  val reg_compare = Reg(UInt(width = 32))
+  val reg_evec = Reg(UInt(width = xprLen))
+  val reg_cause = Reg(Bits(width = xprLen))
+
+  val r_irq_timer = Reg(init=Bool(false))
+
+  val decoded_addr = {
+    val map = for ((v, i) <- PCUCSRs.all.zipWithIndex)
+      yield v -> UInt(BigInt(1) << i)
+    val out = ROM(map)(io.rw.addr)
+    Map((PCUCSRs.all zip out.toBools):_*)
+  }
+
+  val read_mapping = collection.mutable.LinkedHashMap[Int,Bits](
+    CSRs.cycle -> reg_time(31, 0),
+    CSRs.cycleh -> reg_time(63, 32),
+    CSRs.time -> reg_time(31, 0),
+    CSRs.timeh -> reg_time(63, 32),
+    CSRs.instret -> reg_instret(31, 0),
+    CSRs.instreth -> reg_instret(63, 32),
+
+    CSRs.sup0 -> reg_sup0,
+    CSRs.sup1 -> reg_sup1,
+    CSRs.epc -> reg_epc,
+    CSRs.badvaddr -> reg_badvaddr,
+    CSRs.count -> reg_time(31, 0),
+    CSRs.compare -> reg_compare,
+    CSRs.evec -> reg_evec,
+    CSRs.cause -> reg_cause,
+    CSRs.status -> Bits(0), // FIXME
+    CSRs.hartid -> UInt(0),
+    CSRs.impl -> UInt(3),
+    CSRs.tohost -> io.scr.rdata(3),
+    CSRs.fromhost -> io.scr.rdata(4)
+  )
+
+  io.rw.rdata := Mux1H(for ((k, v) <- read_mapping) yield decoded_addr(k) -> v)
+
+  val scr_wen = Bool()
+  val scr_waddr = UInt()
+
+  scr_wen := Bool(false)
+  scr_waddr := UInt(0, log2Up(params(HTIFNSCR)))
+
+  val wen = io.rw.cmd != CSR.N
+  val wdata = io.rw.wdata
+  when (wen) {
+    when (decoded_addr(CSRs.sup0)) { reg_sup0 := wdata }
+    when (decoded_addr(CSRs.sup1)) { reg_sup1 := wdata }
+    when (decoded_addr(CSRs.epc)) { reg_epc := wdata }
+    when (decoded_addr(CSRs.evec)) { reg_evec := wdata }
+    when (decoded_addr(CSRs.count)) { reg_time := wdata }
+    when (decoded_addr(CSRs.compare)) { reg_compare := wdata; r_irq_timer := Bool(false) }
+    when (decoded_addr(CSRs.tohost)) { when (io.scr.rdata(3) === Bits(0)) { scr_wen := Bool(true); scr_waddr := UInt(3) } }
+    when (decoded_addr(CSRs.fromhost)) { scr_wen := Bool(true); scr_waddr := UInt(4) }
+  }
+
+  io.scr.wen := scr_wen
+  io.scr.waddr := scr_waddr
+  io.scr.wdata := wdata
+
+  io.time := reg_time
 }
 
 class MemArbiter extends Module with PCUParameters
@@ -624,6 +775,8 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with P
 {
   val io = new Bundle {
     val mem = new ScratchPadIO
+    val scr = new SCRIO
+    val scr_ready = Bool(INPUT)
   }
 
   val ctrl = Module(new Control)
@@ -634,6 +787,10 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with P
   ibuf.io.cpu <> ctrl.io.imem
   ibuf.io.cpu <> dpath.io.imem
   ctrl.io.dpath <> dpath.io.ctrl
+
+  ctrl.io.scr_ready := io.scr_ready
+  io.scr <> ctrl.io.scr
+  io.scr <> dpath.io.scr
 
   arb.io.imem <> ibuf.io.mem
   arb.io.dmem <> ctrl.io.dmem
@@ -647,7 +804,7 @@ class PCU extends Module with PCUParameters
     val core_reset = Bool(INPUT)
     val spad = new MemPipeIO().flip
     val scr = new SCRIO
-    val scr_busy = Bool(INPUT)
+    val scr_ready = Bool(INPUT)
   }
 
   val core = Module(new Core(resetSignal = io.core_reset))
@@ -655,6 +812,7 @@ class PCU extends Module with PCUParameters
 
   spad.io.cpu <> core.io.mem
   spad.io.mem <> io.spad
-  
-  io.scr.wen := Bool(false)
+
+  io.scr <> core.io.scr
+  core.io.scr_ready := io.scr_ready
 }
