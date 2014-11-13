@@ -64,7 +64,8 @@ class ScratchPad extends Module with ZScaleParameters
   val state = Reg(init = s_idle)
 
   val ram = Mem(Bits(width = spadWidth), spadDepth, seqRead = true)
-  val raddr = Reg(UInt())
+  val ren = Bool()
+  val raddr = UInt()
   val rtag = Reg(UInt())
   val rdata = Bits()
   val wen = Bool()
@@ -72,8 +73,15 @@ class ScratchPad extends Module with ZScaleParameters
   val wdata = Bits()
   val wmask = Bits()
 
+  // back side
+  val addr = Reg(UInt())
+  val tag = Reg(UInt())
+  val cnt = Reg(UInt(width = log2Up(memDataBeats)))
+
   // ram read port
-  rdata := ram(raddr)
+  ren := state === s_idle && io.cpu.req.valid && !io.cpu.req.bits.rw
+  raddr := io.cpu.req.bits.addr
+  rdata := ram(RegEnable(raddr, ren))
 
   // ram write port
   when (wen) {
@@ -91,7 +99,6 @@ class ScratchPad extends Module with ZScaleParameters
     when (io.cpu.req.bits.rw) {
       wen := Bool(true)
     } .otherwise {
-      raddr := io.cpu.req.bits.addr
       rtag := io.cpu.req.bits.tag
     }
   }
@@ -99,10 +106,6 @@ class ScratchPad extends Module with ZScaleParameters
   io.cpu.resp.valid := Reg(next = io.cpu.req.fire() && !io.cpu.req.bits.rw)
   io.cpu.resp.bits.data := rdata
   io.cpu.resp.bits.tag := rtag
-
-  val addr = Reg(UInt())
-  val tag = Reg(UInt())
-  val cnt = Reg(UInt(width = log2Up(memDataBeats)))
 
   when (state === s_idle && io.mem.req_cmd.valid) {
     state := Mux(io.mem.req_cmd.bits.rw, s_write, s_read)
@@ -127,6 +130,7 @@ class ScratchPad extends Module with ZScaleParameters
   io.mem.req_data.ready := (state === s_write)
 
   when (state === s_read) {
+    ren := Bool(true)
     raddr := Cat(addr, cnt)
   }
   when (io.mem.req_data.fire()) {
