@@ -21,6 +21,8 @@ abstract trait ZScaleParameters extends UsesParameters
   val spadAddrBits = log2Up(spadDepth)
   val spadTagBits = 1
 
+  val arbFast = true
+
   val xprLen = 32
   val addrBits = log2Up(spadSize)
   val coreInstBits = params(CoreInstBits)
@@ -82,6 +84,7 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
   arb.io.imem <> ibuf.io.mem
   arb.io.dmem <> ctrl.io.dmem
   arb.io.dmem <> dpath.io.dmem
+  arb.io.dmem_fast_arb := ctrl.io.dmem_fast_arb
   io.mem <> arb.io.mem
 
   ctrl.io.host <> io.host

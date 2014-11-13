@@ -58,6 +58,7 @@ class Control extends Module with ZScaleParameters
     val dpath = new CtrlDpathIO
     val imem = new InstMemIO
     val dmem = new ScratchPadIO
+    val dmem_fast_arb = Bool(OUTPUT)
     val host = new HTIFIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
@@ -210,6 +211,7 @@ class Control extends Module with ZScaleParameters
 
   io.imem.invalidate.valid := id_retire && id_fence_i
   io.dmem.req.valid := io.dpath.mem_valid
+  io.dmem_fast_arb := id_ok && id_mem_valid
 
   when (!io.dpath.killdx && id_set_sb) {
     sb_stall := Bool(true)

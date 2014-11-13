@@ -79,14 +79,17 @@ class MemArbiter extends Module with ZScaleParameters
   val io = new Bundle {
     val imem = new ScratchPadIO().flip
     val dmem = new ScratchPadIO().flip
+    val dmem_fast_arb = Bool(INPUT)
     val mem = new ScratchPadIO
   }
 
-  io.imem.req.ready := io.mem.req.ready && !io.dmem.req.valid
+  val arb_signal = if (arbFast) io.dmem_fast_arb else io.dmem.req.valid
+
+  io.imem.req.ready := io.mem.req.ready && !arb_signal
   io.dmem.req.ready := io.mem.req.ready
   io.mem.req.valid := io.imem.req.valid || io.dmem.req.valid
-  io.mem.req.bits := Mux(io.dmem.req.valid, io.dmem.req.bits, io.imem.req.bits)
-  io.mem.req.bits.tag := io.dmem.req.valid
+  io.mem.req.bits := Mux(arb_signal, io.dmem.req.bits, io.imem.req.bits)
+  io.mem.req.bits.tag := arb_signal
 
   io.imem.resp.valid := io.mem.resp.valid && (io.mem.resp.bits.tag === Bits(0))
   io.dmem.resp.valid := io.mem.resp.valid && (io.mem.resp.bits.tag === Bits(1))
