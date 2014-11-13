@@ -152,6 +152,7 @@ class Datapath extends Module with ZScaleParameters
         csr_operand))
 
   io.scr <> csr.io.scr
+  csr.io.masked_wen := id_addr(0) != UInt(0) || !Vec(CSR.S, CSR.C).contains(io.ctrl.csr_cmd)
   csr.io.retire := !io.ctrl.killdx
   csr.io.xcpt := io.ctrl.xcpt
   csr.io.cause := io.ctrl.cause

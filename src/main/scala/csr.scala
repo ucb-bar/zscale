@@ -19,6 +19,7 @@ class CSRFile extends Module with ZScaleParameters
       val wdata = Bits(INPUT, xprLen)
     }
     val scr = new SCRIO
+    val masked_wen = Bool(INPUT) // to filter out csrrs/csrrc with x0
 
     val retire = Bool(INPUT)
     val xcpt = Bool(INPUT)
@@ -169,7 +170,7 @@ class CSRFile extends Module with ZScaleParameters
     when (decoded_addr(CSRs.fromhost)) { when (reg_fromhost === Bits(0) || !host_pcr_req_fire) { reg_fromhost := wdata } }
 
     // SCRs mapped into the CSR space
-    when (io.rw.addr(11, 8) === UInt(4)) { scr_wen := Bool(true); scr_waddr := io.rw.addr }
+    when (io.rw.addr(11, 8) === UInt(4)) { scr_wen := io.masked_wen; scr_waddr := io.rw.addr }
   }
 
   io.scr.wen := scr_wen
