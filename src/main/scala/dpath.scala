@@ -64,7 +64,7 @@ class Datapath extends Module with ZScaleParameters
   when (!io.ctrl.stallf) {
     pc := Mux(io.ctrl.j || io.ctrl.br && io.ctrl.br_taken, id_br_target,
           Mux(io.ctrl.xcpt || io.ctrl.sret, csr.io.evec,
-              pc + UInt(4)))
+              pc + UInt(4))) & SInt(-2)
   }
 
   io.imem.req.bits.addr := pc
@@ -247,7 +247,7 @@ class Datapath extends Module with ZScaleParameters
   // to control
   io.ctrl.status := csr.io.status
   io.ctrl.inst := id_inst
-  io.ctrl.ma_pc := pc(1) || pc(0)
+  io.ctrl.ma_pc := pc(1)
   io.ctrl.fa_pc := pc >= spadSize
   io.ctrl.ma_addr := (dmem_req_addr(1) || dmem_req_addr(0)) && dmem_sgen.word || dmem_req_addr(0) && dmem_sgen.half
   io.ctrl.fa_addr := dmem_req_addr >= spadSize
