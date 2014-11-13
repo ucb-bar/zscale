@@ -176,6 +176,10 @@ class Control extends Module with ZScaleParameters
   val (id_interrupt_unmasked, id_interrupt_cause) = checkExceptions(id_interrupts)
   val id_interrupt = sr.ei && id_interrupt_unmasked
 
+  when (id_interrupt) {
+    id_valid := Bool(false)
+  }
+
   val (id_xcpt, id_cause) = checkExceptions(List(
     (id_interrupt, id_interrupt_cause),
     (io.dpath.ma_pc, UInt(Causes.misaligned_fetch)),
