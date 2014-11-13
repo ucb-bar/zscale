@@ -248,9 +248,9 @@ class Datapath extends Module with ZScaleParameters
   io.ctrl.status := csr.io.status
   io.ctrl.inst := id_inst
   io.ctrl.ma_pc := pc(1)
-  io.ctrl.fa_pc := pc >= spadSize
+  io.ctrl.fa_pc := pc(xprLen-1, log2Up(spadSize)).orR
   io.ctrl.ma_addr := (dmem_req_addr(1) || dmem_req_addr(0)) && dmem_sgen.word || dmem_req_addr(0) && dmem_sgen.half
-  io.ctrl.fa_addr := dmem_req_addr >= spadSize
+  io.ctrl.fa_addr := dmem_req_addr(xprLen-1, log2Up(spadSize)).orR
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
