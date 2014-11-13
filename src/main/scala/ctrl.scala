@@ -225,7 +225,7 @@ class Control extends Module with ZScaleParameters
 
   val br_taken = io.dpath.br && io.dpath.br_taken
   val redirect = io.dpath.j || br_taken || id_xcpt || io.dpath.sret
-  io.dpath.stallf := !io.imem.resp.valid && !redirect || io.imem.invalidate.valid || io.dpath.stalldx
+  io.dpath.stallf := !redirect && (!io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.stalldx)
   io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || redirect
   io.dpath.stalldx := sb_stall || scr_stall || imem_stall || dmem_stall || mul_stall
   io.dpath.killdx := !id_retire || io.dpath.stalldx
