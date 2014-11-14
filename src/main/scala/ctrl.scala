@@ -180,7 +180,7 @@ class Control extends Module with ZScaleParameters
     id_valid := Bool(false)
   }
 
-  val (id_xcpt, id_cause) = checkExceptions(List(
+  val (id_xcpt_nomem, id_cause_nomem) = checkExceptions(List(
     (id_interrupt, id_interrupt_cause),
     (io.dpath.ma_pc, UInt(Causes.misaligned_fetch)),
     (io.dpath.fa_pc, UInt(Causes.fault_fetch)),
@@ -188,32 +188,36 @@ class Control extends Module with ZScaleParameters
     (id_ok && id_csr_privileged, UInt(Causes.privileged_instruction)),
     (id_ok && id_sret && !sr.s, UInt(Causes.privileged_instruction)),
     (id_ok && id_scall, UInt(Causes.syscall)),
-    (id_ok && id_sbreak, UInt(Causes.breakpoint)),
+    (id_ok && id_sbreak, UInt(Causes.breakpoint)) ))
+
+  val (id_xcpt, id_cause) = checkExceptions(List(
+    (id_xcpt_nomem, id_cause_nomem),
     (id_ok && id_mem_valid && !id_mem_rw && io.dpath.ma_addr, UInt(Causes.misaligned_load)),
     (id_ok && id_mem_valid &&  id_mem_rw && io.dpath.ma_addr, UInt(Causes.misaligned_store)),
     (id_ok && id_mem_valid && !id_mem_rw && io.dpath.fa_addr, UInt(Causes.fault_load)),
     (id_ok && id_mem_valid &&  id_mem_rw && io.dpath.fa_addr, UInt(Causes.fault_store)) ))
 
+  val id_retire_nomem = id_ok && !id_xcpt_nomem
   val id_retire = id_ok && !id_xcpt
 
-  io.dpath.j := id_retire && id_j
-  io.dpath.br := id_retire && id_br
+  io.dpath.j := id_retire_nomem && id_j
+  io.dpath.br := id_retire_nomem && id_br
   io.dpath.sel_alu1 := id_sel_alu1
   io.dpath.sel_alu2 := id_sel_alu2
   io.dpath.sel_imm := id_sel_imm
   io.dpath.fn_alu := id_fn_alu
   io.dpath.wen := id_retire && id_wen
-  io.dpath.csr_en := id_retire && id_csr_en
-  io.dpath.csr_cmd := Mux(id_retire, id_csr, CSR.N)
+  io.dpath.csr_en := id_retire_nomem && id_csr_en
+  io.dpath.csr_cmd := Mux(id_retire_nomem, id_csr, CSR.N)
   io.dpath.mem_valid := id_retire && id_mem_valid
   io.dpath.mem_rw := id_mem_rw
   io.dpath.mem_type := id_mem_type
-  io.dpath.mul_valid := id_retire && id_mul_valid
+  io.dpath.mul_valid := id_retire_nomem && id_mul_valid
   io.dpath.xcpt := id_xcpt
   io.dpath.cause := id_cause
-  io.dpath.sret := id_retire && id_sret
+  io.dpath.sret := id_retire_nomem && id_sret
 
-  io.imem.invalidate.valid := id_retire && id_fence_i
+  io.imem.invalidate.valid := id_retire_nomem && id_fence_i
   io.dmem.req.valid := io.dpath.mem_valid
   io.dmem_fast_arb := id_ok && id_mem_valid
 
