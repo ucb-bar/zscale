@@ -189,22 +189,22 @@ class Datapath extends Module with ZScaleParameters
   }
 
   val dmem_req_addr = alu.io.adder_out
-  val dmem_reg_mem_type = Reg(UInt(width = MT_SZ))
-  val dmem_reg_lowaddr = Reg(UInt(width = log2Up(spadWordBytes)))
-  val dmem_reg_rd = Reg(UInt(width = 5))
   val dmem_sgen = new StoreGen32(io.ctrl.mem_type, dmem_req_addr, id_rs(1))
-  val dmem_lgen = new LoadGen32(dmem_reg_mem_type, dmem_reg_lowaddr, io.dmem.resp.bits.data)
-
-  when (io.ctrl.mem_valid && !io.ctrl.mem_rw) {
-    dmem_reg_mem_type := io.ctrl.mem_type
-    dmem_reg_lowaddr := dmem_req_addr
-    dmem_reg_rd := id_rd
-  }
 
   io.dmem.req.bits.addr := dmem_req_addr >> UInt(log2Up(spadWordBytes))
   io.dmem.req.bits.rw := io.ctrl.mem_rw
   io.dmem.req.bits.wmask := dmem_sgen.mask
   io.dmem.req.bits.data := dmem_sgen.data
+
+  // we can register load metadata on the CPU side, since there's only one load in flight
+  val dmem_load_valid = io.ctrl.mem_valid && !io.ctrl.mem_rw
+  val dmem_load_mem_type = RegEnable(io.ctrl.mem_type, dmem_load_valid)
+  val dmem_load_lowaddr = RegEnable(dmem_req_addr(log2Up(spadWordBytes)-1, 0), dmem_load_valid)
+  val dmem_load_rd = RegEnable(id_rd, dmem_load_valid)
+
+  val dmem_resp_valid = ShiftRegister(io.dmem.resp.valid, dmemRespStages, Bool(true))
+  val dmem_resp_data = ShiftRegister(io.dmem.resp.bits.data, dmemRespStages, io.dmem.resp.valid)
+  val dmem_lgen = new LoadGen32(dmem_load_mem_type, dmem_load_lowaddr, dmem_resp_data)
 
   // MUL/DIV
   val muldiv = Module(new MulDiv, {case XprLen => 32})
@@ -218,16 +218,16 @@ class Datapath extends Module with ZScaleParameters
   muldiv.io.resp.ready := Bool(true)
 
   // WB
-  val wen = io.ctrl.wen || io.dmem.resp.valid || muldiv.io.resp.valid
+  val wen = io.ctrl.wen || dmem_resp_valid || muldiv.io.resp.valid
   val waddr = MuxCase(
     id_rd, Array(
-      io.dmem.resp.valid -> dmem_reg_rd,
+      dmem_resp_valid -> dmem_load_rd,
       muldiv.io.resp.valid -> muldiv.io.resp.bits.tag
     ))
   val wdata = MuxCase(
     alu.io.out, Array(
       io.ctrl.csr_en -> csr.io.rw.rdata,
-      io.dmem.resp.valid -> dmem_lgen.byte,
+      dmem_resp_valid -> dmem_lgen.byte,
       muldiv.io.resp.valid -> muldiv.io.resp.bits.data
     ))
 
@@ -254,7 +254,7 @@ class Datapath extends Module with ZScaleParameters
   io.ctrl.fa_addr := dmem_req_addr(xprLen-1, log2Up(spadSize)).orR
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
-  io.ctrl.clear_sb := io.dmem.resp.valid || muldiv.io.resp.valid
+  io.ctrl.clear_sb := dmem_resp_valid || muldiv.io.resp.valid
 
   printf("Z%d: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
     io.host.id, csr.io.time(31, 0), !io.ctrl.killdx,
