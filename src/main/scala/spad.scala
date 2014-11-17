@@ -103,15 +103,10 @@ class ScratchPad extends Module with ZScaleParameters
     }
   }
 
-  val _cpu_resp_valid = Reg(next = io.cpu.req.fire() && !io.cpu.req.bits.rw)
-  val cpu_resp_valid = Vec(_cpu_resp_valid, Reg(next = _cpu_resp_valid))
-  val cpu_resp_data = Vec(rdata, RegEnable(rdata, _cpu_resp_valid))
-  val cpu_resp_tag = Vec(rtag, RegEnable(rtag, _cpu_resp_valid))
-  val cpu_resp_idx = if (spadRegisterCPUOutput) 1 else 0
-
-  io.cpu.resp.valid := cpu_resp_valid(cpu_resp_idx)
-  io.cpu.resp.bits.data := cpu_resp_data(cpu_resp_idx)
-  io.cpu.resp.bits.tag := cpu_resp_tag(cpu_resp_idx)
+  val cpu_resp_valid = Reg(next = io.cpu.req.fire() && !io.cpu.req.bits.rw)
+  io.cpu.resp.valid := ShiftRegister(cpu_resp_valid, spadRespStages, Bool(true))
+  io.cpu.resp.bits.data := ShiftRegister(rdata, spadRespStages, cpu_resp_valid)
+  io.cpu.resp.bits.tag := ShiftRegister(rtag, spadRespStages, cpu_resp_valid)
 
   when (state === s_idle && io.mem.req_cmd.valid) {
     state := Mux(io.mem.req_cmd.bits.rw, s_write, s_read)
