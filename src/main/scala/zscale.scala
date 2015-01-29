@@ -101,19 +101,18 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
 class ZScale extends Module with ZScaleParameters
 {
   val io = new Bundle {
-    val spad = new MemPipeIO().flip
-    val host = new HTIFIO
+    val mem = new ScratchPadIO
+    val host = new HostIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
   }
 
-  val core = Module(new Core(resetSignal = io.host.reset))
-  val spad = Module(new ScratchPad)
+  val htif = Module(new HTIF(CSRs.reset))
+  htif.io.host   <> io.host
 
-  spad.io.cpu <> core.io.mem
-  spad.io.mem <> io.spad
-
-  core.io.host <> io.host
-  io.scr <> core.io.scr
+  val core = Module(new Core(resetSignal = this.reset))
+  core.io.host <> htif.io.cpu(0)
+  core.io.mem <> io.mem
+  core.io.scr <> io.scr
   core.io.scr_ready := io.scr_ready
 }
