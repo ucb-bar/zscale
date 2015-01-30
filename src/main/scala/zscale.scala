@@ -97,8 +97,7 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
   io.scr <> dpath.io.scr
 }
 
-// TODO: change scr write port into Decoupled
-class ZScale extends Module with ZScaleParameters
+class ZScaleCPP extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val mem = new ScratchPadIO
@@ -115,4 +114,21 @@ class ZScale extends Module with ZScaleParameters
   core.io.mem <> io.mem
   core.io.scr <> io.scr
   core.io.scr_ready := io.scr_ready
+}
+
+class ZScaleFPGA extends Module with ZScaleParameters
+{
+  val io = new Bundle {
+    val mem = new MemPipeIO().flip
+    val scr = new SCRIO
+    val scr_ready = Bool(INPUT)
+  }
+
+  val core = Module(new Core(resetSignal = this.reset))
+  core.io.scr <> io.scr
+  core.io.scr_ready := io.scr_ready
+
+  val spad = Module(new ScratchPad)
+  spad.io.mem <> io.mem
+  spad.io.cpu <> core.io.mem
 }
