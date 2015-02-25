@@ -96,39 +96,3 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
   io.scr <> ctrl.io.scr
   io.scr <> dpath.io.scr
 }
-
-class ZScaleCPP extends Module with ZScaleParameters
-{
-  val io = new Bundle {
-    val mem = new ScratchPadIO
-    val host = new HostIO
-    val scr = new SCRIO
-    val scr_ready = Bool(INPUT)
-  }
-
-  val htif = Module(new HTIF(CSRs.reset))
-  htif.io.host   <> io.host
-
-  val core = Module(new Core(resetSignal = this.reset))
-  core.io.host <> htif.io.cpu(0)
-  core.io.mem <> io.mem
-  core.io.scr <> io.scr
-  core.io.scr_ready := io.scr_ready
-}
-
-class ZScaleFPGA extends Module with ZScaleParameters
-{
-  val io = new Bundle {
-    val mem = new MemPipeIO().flip
-    val scr = new SCRIO
-    val scr_ready = Bool(INPUT)
-  }
-
-  val core = Module(new Core(resetSignal = this.reset))
-  core.io.scr <> io.scr
-  core.io.scr_ready := io.scr_ready
-
-  val spad = Module(new ScratchPad)
-  spad.io.mem <> io.mem
-  spad.io.cpu <> core.io.mem
-}
