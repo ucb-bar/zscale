@@ -207,7 +207,9 @@ class Datapath extends Module with ZScaleParameters
   val dmem_lgen = new LoadGen32(dmem_load_mem_type, dmem_load_lowaddr, dmem_resp_data)
 
   // MUL/DIV
-  val muldiv = Module(new MulDiv, {case XprLen => 32})
+  val muldiv = Module(new MulDiv(
+      mulUnroll = if(params(FastMulDiv)) 8 else 1,
+      earlyOut = params(FastMulDiv)))
   muldiv.io.req.valid := io.ctrl.mul_valid
   muldiv.io.req.bits.fn := io.ctrl.fn_alu
   muldiv.io.req.bits.dw := DW_64
