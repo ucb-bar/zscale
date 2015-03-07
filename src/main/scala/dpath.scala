@@ -55,6 +55,7 @@ class Datapath extends Module with ZScaleParameters
     val dmem = new ScratchPadIO
     val host = new HTIFIO
     val scr = new SCRIO
+    val irqs = IRQs(INPUT)
   }
 
   val pc = Reg(init = UInt(0, xprLen))
@@ -158,6 +159,7 @@ class Datapath extends Module with ZScaleParameters
   csr.io.cause := io.ctrl.cause
   csr.io.pc := id_pc
   csr.io.sret := io.ctrl.sret
+  csr.io.irqs := io.irqs
 
   // DMEM
   class StoreGen32(typ: Bits, addr: Bits, dat: Bits) {

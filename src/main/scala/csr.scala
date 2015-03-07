@@ -7,6 +7,11 @@ import uncore._
 import rocket._
 import rocket.Util._
 
+object IRQs {
+  val clear = 0x510
+  def apply(dir: IODirection = null) = Bits(dir, width = 5)
+}
+
 // TODO: merge with Rocket's CSRFile
 class CSRFile extends Module with ZScaleParameters
 {
@@ -26,6 +31,7 @@ class CSRFile extends Module with ZScaleParameters
     val cause = UInt(INPUT, xprLen)
     val pc = UInt(INPUT, xprLen)
     val sret = Bool(INPUT)
+    val irqs = IRQs(INPUT)
 
     val status = new Status().asOutput
     val evec = UInt(OUTPUT, xprLen)
@@ -49,6 +55,7 @@ class CSRFile extends Module with ZScaleParameters
 
   val r_irq_timer = Reg(init=Bool(false))
   val r_irq_ipi = Reg(init=Bool(true))
+  val r_irq_ext = Reg(init=Bits(0, 5))
 
   val cpu_req_valid = io.rw.cmd != CSR.N
   val host_pcr_req_valid = Reg(Bool()) // don't reset
@@ -105,6 +112,10 @@ class CSRFile extends Module with ZScaleParameters
     r_irq_timer := Bool(true)
   }
 
+  when (io.irqs.orR) {
+    r_irq_ext := r_irq_ext | io.irqs
+  }
+
   io.status := reg_status
   io.status.ef := false
   io.status.er := false
@@ -112,8 +123,7 @@ class CSRFile extends Module with ZScaleParameters
   io.status.s64 := false
   io.status.vm := false
   io.status.zero := 0
-  io.status.ip := Cat(r_irq_timer, reg_fromhost.orR, r_irq_ipi,   Bool(false),
-                      Bool(false), Bool(false),      Bool(false), Bool(false))
+  io.status.ip := Cat(r_irq_timer, reg_fromhost.orR, r_irq_ipi, r_irq_ext)
   io.evec := Mux(io.xcpt, reg_evec, reg_epc)
   io.time := reg_time
 
@@ -138,7 +148,9 @@ class CSRFile extends Module with ZScaleParameters
     CSRs.hartid -> io.host.id,
     CSRs.impl -> UInt(3), // ZScale
     CSRs.tohost -> reg_tohost,
-    CSRs.fromhost -> reg_fromhost
+    CSRs.fromhost -> reg_fromhost,
+
+    IRQs.clear -> r_irq_ext
   )
 
   // SCRs mapped into the CSR space
@@ -168,6 +180,7 @@ class CSRFile extends Module with ZScaleParameters
     when (decoded_addr(CSRs.clear_ipi)) { r_irq_ipi := wdata(0) }
     when (decoded_addr(CSRs.tohost)) { when (reg_tohost === Bits(0) || host_pcr_req_fire) { reg_tohost := wdata } }
     when (decoded_addr(CSRs.fromhost)) { when (reg_fromhost === Bits(0) || !host_pcr_req_fire) { reg_fromhost := wdata } }
+    when (decoded_addr(IRQs.clear)) { r_irq_ext := wdata(4, 0) }
 
     // SCRs mapped into the CSR space
     when (io.rw.addr(11, 8) === UInt(4)) { scr_wen := io.masked_wen; scr_waddr := io.rw.addr }

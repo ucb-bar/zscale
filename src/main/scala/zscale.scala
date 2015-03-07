@@ -58,6 +58,8 @@ abstract trait ZScaleParameters extends UsesParameters
   csrList += CSRs.tohost
   csrList += CSRs.fromhost
 
+  csrList += IRQs.clear
+
   val CSRBaseForSCRs = 0x400
 
   for (i <- 0 until nSCR) {
@@ -72,6 +74,7 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
     val host = new HTIFIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
+    val irqs = IRQs(INPUT)
   }
 
   val ctrl = Module(new Control)
@@ -91,6 +94,7 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
 
   ctrl.io.host <> io.host
   dpath.io.host <> io.host
+  dpath.io.irqs := io.irqs
 
   ctrl.io.scr_ready := io.scr_ready
   io.scr <> ctrl.io.scr
@@ -103,12 +107,14 @@ class ZScale extends Module {
     val host = new HTIFIO
     val scr = new SCRIO
     val scr_ready = Bool(INPUT)
+    val irqs = IRQs(INPUT)
   }
 
   val core = Module(new Core(resetSignal = io.host.reset))
   core.io.host <> io.host
   core.io.scr <> io.scr
   core.io.scr_ready := io.scr_ready
+  core.io.irqs := io.irqs
 
   val spad = Module(new ScratchPad)
   spad.io.cpu <> core.io.mem
