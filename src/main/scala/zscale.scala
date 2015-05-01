@@ -32,91 +32,72 @@ abstract trait ZScaleParameters extends UsesParameters
 
   val nSCR = params(HTIFNSCR)
   require(log2Up(nSCR) <= 8)
+}
 
-  val csrList = collection.mutable.ArrayBuffer[Int]()
+class SRAMRequest extends Bundle with ZScaleParameters
+{
+  val rw = Bool()
+  val addr = UInt(width = 13)
+  val wmask = Bits(width = xprLen)
+  val data = Bits(width = xprLen)
+}
 
-  csrList += CSRs.cycle
-  csrList += CSRs.cycleh
-  csrList += CSRs.time
-  csrList += CSRs.timeh
-  csrList += CSRs.instret
-  csrList += CSRs.instreth
+class SRAMResponse extends Bundle with ZScaleParameters
+{
+  val data = Bits(width = xprLen)
+}
 
-  csrList += CSRs.sup0
-  csrList += CSRs.sup1
-  csrList += CSRs.epc
-  csrList += CSRs.badvaddr
-  csrList += CSRs.count
-  csrList += CSRs.compare
-  csrList += CSRs.evec
-  csrList += CSRs.cause
-  csrList += CSRs.status
-  csrList += CSRs.hartid
-  csrList += CSRs.impl
-  csrList += CSRs.send_ipi
-  csrList += CSRs.clear_ipi
-  csrList += CSRs.tohost
-  csrList += CSRs.fromhost
+class SRAMIO extends Bundle with ZScaleParameters
+{
+  val req = Valid(new SRAMRequest)
+  val resp = Valid(new SRAMResponse).flip
+}
 
-  csrList += IRQs.clear
+class SRAMInstIO extends SRAMIO
+{
+  val invalidate = Decoupled(Bits(width = 1))
+}
 
-  val CSRBaseForSCRs = 0x400
-
-  for (i <- 0 until nSCR) {
-    csrList += (CSRBaseForSCRs + i)
-  }
+class SRAMDataIO extends Bundle with ZScaleParameters
+{
+  val req = Decoupled(new SRAMRequest)
+  val resp = Valid(new SRAMResponse).flip
 }
 
 class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZScaleParameters
 {
   val io = new Bundle {
-    val mem = new ScratchPadIO
+    val imem = new SRAMInstIO
+    val dmem = new SRAMDataIO
     val host = new HTIFIO
-    val scr = new SCRIO
-    val scr_ready = Bool(INPUT)
-    val irqs = IRQs(INPUT)
   }
 
   val ctrl = Module(new Control)
   val dpath = Module(new Datapath)
-  val ibuf = Module(new InstLineBuffer)
-  val arb = Module(new MemArbiter)
 
-  ibuf.io.cpu <> ctrl.io.imem
-  ibuf.io.cpu <> dpath.io.imem
+  io.imem <> ctrl.io.imem
+  io.imem <> dpath.io.imem
+  io.dmem <> ctrl.io.dmem
+  io.dmem <> dpath.io.dmem
   ctrl.io.dpath <> dpath.io.ctrl
-
-  arb.io.imem <> ibuf.io.mem
-  arb.io.dmem <> ctrl.io.dmem
-  arb.io.dmem <> dpath.io.dmem
-  arb.io.dmem_fast_arb := ctrl.io.dmem_fast_arb
-  io.mem <> arb.io.mem
 
   ctrl.io.host <> io.host
   dpath.io.host <> io.host
-  dpath.io.irqs := io.irqs
-
-  ctrl.io.scr_ready := io.scr_ready
-  io.scr <> ctrl.io.scr
-  io.scr <> dpath.io.scr
 }
 
 class ZScale extends Module {
   val io = new Bundle {
-    val mem = new MemPipeIO().flip
+    val imem = new SRAMIO
+    val dmem = new SRAMIO
     val host = new HTIFIO
-    val scr = new SCRIO
-    val scr_ready = Bool(INPUT)
-    val irqs = IRQs(INPUT)
   }
 
-  val core = Module(new Core(resetSignal = io.host.reset))
-  core.io.host <> io.host
-  core.io.scr <> io.scr
-  core.io.scr_ready := io.scr_ready
-  core.io.irqs := io.irqs
+  val core = Module(new Core(resetSignal = io.host.reset), {case TLId => "L1ToL2"})
 
-  val spad = Module(new ScratchPad)
-  spad.io.cpu <> core.io.mem
-  spad.io.mem <> io.mem
+  core.io.host <> io.host
+  io.imem <> core.io.imem
+  io.dmem <> core.io.dmem
+
+  core.io.imem.invalidate.ready := Bool(true)
+  core.io.dmem.req.ready := Bool(true)
 }

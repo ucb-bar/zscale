@@ -51,24 +51,26 @@ class Datapath extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip
-    val imem = new InstMemIO
-    val dmem = new ScratchPadIO
+    val imem = new SRAMInstIO
+    val dmem = new SRAMDataIO
     val host = new HTIFIO
-    val scr = new SCRIO
-    val irqs = IRQs(INPUT)
   }
 
-  val pc = Reg(init = UInt(0, xprLen))
+  val npc = UInt()
+  val pc = Reg(init = UInt(252, xprLen))
   val id_br_target = UInt()
-  val csr = Module(new CSRFile)
+  val csr = Module(new rocket.CSRFile, { case UseVM => false; case XLen => 32 })
+  val xcpt = io.ctrl.xcpt || io.ctrl.csr_xcpt
+
+  npc := Mux(io.ctrl.j || io.ctrl.br && io.ctrl.br_taken, id_br_target,
+         Mux(xcpt || io.ctrl.csr_eret, csr.io.evec,
+             pc + UInt(4))) & SInt(-2)
 
   when (!io.ctrl.stallf) {
-    pc := Mux(io.ctrl.j || io.ctrl.br && io.ctrl.br_taken, id_br_target,
-          Mux(io.ctrl.xcpt || io.ctrl.sret, csr.io.evec,
-              pc + UInt(4))) & SInt(-2)
+    pc := npc
   }
 
-  io.imem.req.bits.addr := pc
+  io.imem.req.bits.addr := Mux(io.ctrl.stallf, pc, npc) >> UInt(2)
 
   val id_pc = Reg(UInt(width = xprLen))
   val id_inst = Reg(Bits(width = coreInstBits))
@@ -76,7 +78,7 @@ class Datapath extends Module with ZScaleParameters
   // !io.ctrl.killf is a power optimization (clock-gating)
   when (!io.ctrl.stalldx && !io.ctrl.killf) {
     id_pc := pc
-    id_inst := io.imem.resp.bits.inst
+    id_inst := io.imem.resp.bits.data
   }
 
   // copied from Rocket's datapath
@@ -147,43 +149,33 @@ class Datapath extends Module with ZScaleParameters
   csr.io.host <> io.host
   csr.io.rw.addr := id_inst(31, 20)
   csr.io.rw.cmd := io.ctrl.csr_cmd
-  csr.io.rw.wdata :=
-    Mux(io.ctrl.csr_cmd === CSR.S, csr.io.rw.rdata | csr_operand,
-    Mux(io.ctrl.csr_cmd === CSR.C, csr.io.rw.rdata & ~csr_operand,
-        csr_operand))
+  csr.io.rw.wdata := csr_operand
 
-  io.scr <> csr.io.scr
-  csr.io.masked_wen := id_addr(0) != UInt(0) || !Vec(CSR.S, CSR.C).contains(io.ctrl.csr_cmd)
+  csr.io.exception := io.ctrl.xcpt
   csr.io.retire := !io.ctrl.killdx
-  csr.io.xcpt := io.ctrl.xcpt
   csr.io.cause := io.ctrl.cause
   csr.io.pc := id_pc
-  csr.io.sret := io.ctrl.sret
-  csr.io.irqs := io.irqs
 
   // DMEM
   class StoreGen32(typ: Bits, addr: Bits, dat: Bits) {
     val byte = typ === MT_B || typ === MT_BU
     val half = typ === MT_H || typ === MT_HU
     val word = typ === MT_W
-    val nw = log2Up(spadWordBytes)
     def mask =
-      Mux(byte, Bits(  1) <<     addr(nw-1,0),
-      Mux(half, Bits(  3) << Cat(addr(nw-1,1), Bits(0,1)),
-      Mux(word, Bits( 15) << Cat(addr(nw-1,2), Bits(0,2)),
-                Fill(nw, Bool(true)))))
+      Mux(byte, Bits(1) << addr(1,0),
+      Mux(half, Bits(3) << Cat(addr(1), Bits(0,1)),
+                Fill(4, Bool(true))))
     def data =
-      Mux(byte, Fill(nw*4, dat( 7,0)),
-      Mux(half, Fill(nw*2, dat(15,0)),
-                Fill(nw,   dat(31,0))))
+      Mux(byte, Fill(4, dat( 7,0)),
+      Mux(half, Fill(2, dat(15,0)),
+                Fill(1, dat(31,0))))
   }
 
   class LoadGen32(typ: Bits, addr: Bits, dat: Bits) {
     val t = new StoreGen32(typ, addr, dat)
     val sign = typ === MT_B || typ === MT_H || typ === MT_W
 
-    val word = MuxLookup(addr(t.nw-1,2), Bits(0, 32),
-      (0 until spadWordBytes/4).map( i => (UInt(i) -> dat(32*(i+1)-1, 32*i)) ))
+    val word = dat
     val halfShift = Mux(addr(1), word(31,16), word(15,0))
     val half = Cat(Mux(t.half, Fill(16, sign && halfShift(15)), word(31,16)), halfShift)
     val byteShift = Mux(addr(0), half(15,8), half(7,0))
@@ -193,15 +185,15 @@ class Datapath extends Module with ZScaleParameters
   val dmem_req_addr = alu.io.adder_out
   val dmem_sgen = new StoreGen32(io.ctrl.mem_type, dmem_req_addr, id_rs(1))
 
-  io.dmem.req.bits.addr := dmem_req_addr >> UInt(log2Up(spadWordBytes))
+  io.dmem.req.bits.addr := dmem_req_addr >> UInt(2)
   io.dmem.req.bits.rw := io.ctrl.mem_rw
-  io.dmem.req.bits.wmask := dmem_sgen.mask
+  io.dmem.req.bits.wmask := FillInterleaved(8, dmem_sgen.mask)
   io.dmem.req.bits.data := dmem_sgen.data
 
   // we can register load metadata on the CPU side, since there's only one load in flight
   val dmem_load_valid = io.ctrl.mem_valid && !io.ctrl.mem_rw
   val dmem_load_mem_type = RegEnable(io.ctrl.mem_type, dmem_load_valid)
-  val dmem_load_lowaddr = RegEnable(dmem_req_addr(log2Up(spadWordBytes)-1, 0), dmem_load_valid)
+  val dmem_load_lowaddr = RegEnable(dmem_req_addr(1, 0), dmem_load_valid)
   val dmem_load_rd = RegEnable(id_rd, dmem_load_valid)
 
   val dmem_resp_valid = ShiftRegister(io.dmem.resp.valid, dmemRespStages, Bool(true))
@@ -211,7 +203,7 @@ class Datapath extends Module with ZScaleParameters
   // MUL/DIV
   val muldiv = Module(new MulDiv(
       mulUnroll = if(params(FastMulDiv)) 8 else 1,
-      earlyOut = params(FastMulDiv)))
+      earlyOut = params(FastMulDiv)), { case XLen => 32 })
   muldiv.io.req.valid := io.ctrl.mul_valid
   muldiv.io.req.bits.fn := io.ctrl.fn_alu
   muldiv.io.req.bits.dw := DW_64
@@ -250,7 +242,6 @@ class Datapath extends Module with ZScaleParameters
   }
 
   // to control
-  io.ctrl.status := csr.io.status
   io.ctrl.inst := id_inst
   io.ctrl.ma_pc := pc(1)
   io.ctrl.fa_pc := pc(xprLen-1, log2Up(spadSize)).orR
@@ -259,6 +250,11 @@ class Datapath extends Module with ZScaleParameters
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
   io.ctrl.clear_sb := dmem_resp_valid || muldiv.io.resp.valid
+  io.ctrl.csr_replay := csr.io.csr_replay
+  io.ctrl.csr_xcpt := csr.io.csr_xcpt
+  io.ctrl.csr_eret := csr.io.eret
+  io.ctrl.csr_interrupt := csr.io.interrupt
+  io.ctrl.csr_interrupt_cause := csr.io.interrupt_cause
 
   printf("Z%d: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
     io.host.id, csr.io.time(31, 0), !io.ctrl.killdx,
@@ -266,15 +262,15 @@ class Datapath extends Module with ZScaleParameters
     Reg(init=45,next=Mux(io.ctrl.br && io.ctrl.br_taken, 66, 45)), // B -
     Reg(init=45,next=Mux(io.ctrl.j, 74, 45)), // J -
     Reg(init=45,next=Mux(io.ctrl.invalidate, 86, 45)), // V -
-    Reg(init=45,next=Mux(io.ctrl.sret, 83, 45)), // S -
-    Reg(init=45,next=Mux(io.ctrl.xcpt, 88, 45)), // X -
+    Reg(init=45,next=Mux(io.ctrl.csr_eret, 83, 45)), // S -
+    Reg(init=45,next=Mux(xcpt, 88, 45)), // X -
     Mux(io.ctrl.sb_stall, 83, 45), // S -
     Mux(io.ctrl.scr_stall, 67, 45), // C -
     Mux(io.ctrl.imem_stall, 73, 45), // I -
     Mux(io.ctrl.dmem_stall, 68, 45), // D -
     Mux(io.ctrl.mul_stall, 77, 45), // M -
-    Mux(io.ctrl.xcpt, 88, 45), // X -
+    Mux(xcpt, 88, 45), // X -
     id_pc, waddr, wdata, wen, id_addr(0), id_rs(0), id_addr(1), id_rs(1),
-    io.ctrl.xcpt, io.ctrl.cause,
+    xcpt, io.ctrl.cause,
     id_inst, id_inst)
 }
