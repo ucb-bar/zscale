@@ -22,7 +22,7 @@ abstract trait ZScaleParameters extends UsesParameters
   val spadTagBits = 1
 
   val spadRespStages = 0
-  val dmemRespStages = 1
+  val dmemRespStages = 0
   val arbFast = true
 
   val xprLen = 32
