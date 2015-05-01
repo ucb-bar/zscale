@@ -12,7 +12,7 @@ abstract trait ZScaleParameters extends UsesParameters
   val memDataBits = params(MIFDataBits)
   val memDataBeats = params(MIFDataBeats)
 
-  val spadSize = 8192
+  val spadSize = 32768
   require(isPow2(spadSize))
   val spadWidth = memDataBits
   val spadWordBytes = spadWidth / 8

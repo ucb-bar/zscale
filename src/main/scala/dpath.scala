@@ -59,7 +59,11 @@ class Datapath extends Module with ZScaleParameters
   val npc = UInt()
   val pc = Reg(init = UInt(252, xprLen))
   val id_br_target = UInt()
-  val csr = Module(new rocket.CSRFile, { case UseVM => false; case XLen => 32 })
+  val csr = Module(new rocket.CSRFile, {
+    case UseVM => false
+    case XLen => 32
+    case BuildFPU => None
+  })
   val xcpt = io.ctrl.xcpt || io.ctrl.csr_xcpt
 
   npc := Mux(io.ctrl.j || io.ctrl.br && io.ctrl.br_taken, id_br_target,
