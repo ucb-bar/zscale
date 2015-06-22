@@ -17,8 +17,8 @@ abstract trait HASTIConstants
   val HBURST_INCR4  = UInt(3, SZ_HBURST)
   val HBURST_WRAP8  = UInt(4, SZ_HBURST)
   val HBURST_INCR8  = UInt(5, SZ_HBURST)
-  val HBURST_WRAP16 = UInt(4, SZ_HBURST)
-  val HBURST_INCR16 = UInt(5, SZ_HBURST)
+  val HBURST_WRAP16 = UInt(6, SZ_HBURST)
+  val HBURST_INCR16 = UInt(7, SZ_HBURST)
 
   val SZ_HRESP      = 1
   val HRESP_OKAY    = UInt(0, SZ_HRESP)
