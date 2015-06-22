@@ -57,7 +57,7 @@ class HASTIMasterIO extends HASTIMasterBase
 class HASTISlaveIO extends HASTISlaveBase
 {
   val hsel      = Bool(INPUT)
-  val hready    = Bool(INPUT)
+  val hreadyin  = Bool(INPUT)
   val hreadyout = Bool(OUTPUT)
   val hresp     = UInt(OUTPUT, SZ_HRESP)
 }
