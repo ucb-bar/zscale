@@ -34,41 +34,11 @@ abstract trait ZScaleParameters extends UsesParameters
   require(log2Up(nSCR) <= 8)
 }
 
-class SRAMRequest extends Bundle with ZScaleParameters
-{
-  val rw = Bool()
-  val addr = UInt(width = 13)
-  val wmask = Bits(width = xprLen)
-  val data = Bits(width = xprLen)
-}
-
-class SRAMResponse extends Bundle with ZScaleParameters
-{
-  val data = Bits(width = xprLen)
-}
-
-class SRAMIO extends Bundle with ZScaleParameters
-{
-  val req = Valid(new SRAMRequest)
-  val resp = Valid(new SRAMResponse).flip
-}
-
-class SRAMInstIO extends SRAMIO
-{
-  val invalidate = Decoupled(Bits(width = 1))
-}
-
-class SRAMDataIO extends Bundle with ZScaleParameters
-{
-  val req = Decoupled(new SRAMRequest)
-  val resp = Valid(new SRAMResponse).flip
-}
-
 class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZScaleParameters
 {
   val io = new Bundle {
-    val imem = new SRAMInstIO
-    val dmem = new SRAMDataIO
+    val imem = new HASTIMasterIO
+    val dmem = new HASTIMasterIO
     val host = new HTIFIO
   }
 
@@ -85,19 +55,24 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
   dpath.io.host <> io.host
 }
 
-class ZScale extends Module {
+class ZScale extends Module with ZScaleParameters {
   val io = new Bundle {
-    val imem = new SRAMIO
-    val dmem = new SRAMIO
     val host = new HTIFIO
   }
 
   val core = Module(new Core(resetSignal = io.host.reset), {case TLId => "L1ToL2"})
+  val imem = Module(new HASTISRAM(8192))
+  val dmem = Module(new HASTISRAM(8192))
 
   core.io.host <> io.host
-  io.imem <> core.io.imem
-  io.dmem <> core.io.dmem
 
-  core.io.imem.invalidate.ready := Bool(true)
-  core.io.dmem.req.ready := Bool(true)
+  imem.io <> core.io.imem
+  core.io.imem.hready := imem.io.hreadyout
+  imem.io.hsel := Bool(true)
+  imem.io.hreadyin := imem.io.hreadyout
+
+  dmem.io <> core.io.dmem
+  core.io.dmem.hready := dmem.io.hreadyout
+  dmem.io.hsel := Bool(true)
+  dmem.io.hreadyin := dmem.io.hreadyout
 }

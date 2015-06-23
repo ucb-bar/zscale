@@ -51,8 +51,8 @@ class Datapath extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip
-    val imem = new SRAMInstIO
-    val dmem = new SRAMDataIO
+    val imem = new HASTIMasterIO
+    val dmem = new HASTIMasterIO
     val host = new HTIFIO
   }
 
@@ -74,7 +74,7 @@ class Datapath extends Module with ZScaleParameters
     pc := npc
   }
 
-  io.imem.req.bits.addr := Mux(io.ctrl.stallf, pc, npc) >> UInt(2)
+  io.imem.haddr := Mux(io.ctrl.stallf, pc, npc)
 
   val id_pc = Reg(UInt(width = xprLen))
   val id_inst = Reg(Bits(width = coreInstBits))
@@ -82,7 +82,7 @@ class Datapath extends Module with ZScaleParameters
   // !io.ctrl.killf is a power optimization (clock-gating)
   when (!io.ctrl.stalldx && !io.ctrl.killf) {
     id_pc := pc
-    id_inst := io.imem.resp.bits.data
+    id_inst := io.imem.hrdata
   }
 
   // copied from Rocket's datapath
@@ -165,10 +165,10 @@ class Datapath extends Module with ZScaleParameters
     val byte = typ === MT_B || typ === MT_BU
     val half = typ === MT_H || typ === MT_HU
     val word = typ === MT_W
-    def mask =
-      Mux(byte, Bits(1) << addr(1,0),
-      Mux(half, Bits(3) << Cat(addr(1), Bits(0,1)),
-                Fill(4, Bool(true))))
+    def size =
+      Mux(byte, UInt("b000"),
+      Mux(half, UInt("b001"),
+                UInt("b010")))
     def data =
       Mux(byte, Fill(4, dat( 7,0)),
       Mux(half, Fill(2, dat(15,0)),
@@ -189,10 +189,10 @@ class Datapath extends Module with ZScaleParameters
   val dmem_req_addr = alu.io.adder_out
   val dmem_sgen = new StoreGen32(io.ctrl.mem_type, dmem_req_addr, id_rs(1))
 
-  io.dmem.req.bits.addr := dmem_req_addr >> UInt(2)
-  io.dmem.req.bits.rw := io.ctrl.mem_rw
-  io.dmem.req.bits.wmask := FillInterleaved(8, dmem_sgen.mask)
-  io.dmem.req.bits.data := dmem_sgen.data
+  io.dmem.haddr := dmem_req_addr
+  io.dmem.hwrite := io.ctrl.mem_rw
+  io.dmem.hsize := dmem_sgen.size
+  io.dmem.hwdata := RegEnable(dmem_sgen.data, io.ctrl.mem_valid && io.ctrl.mem_rw)
 
   // we can register load metadata on the CPU side, since there's only one load in flight
   val dmem_load_valid = io.ctrl.mem_valid && !io.ctrl.mem_rw
@@ -200,8 +200,8 @@ class Datapath extends Module with ZScaleParameters
   val dmem_load_lowaddr = RegEnable(dmem_req_addr(1, 0), dmem_load_valid)
   val dmem_load_rd = RegEnable(id_rd, dmem_load_valid)
 
-  val dmem_resp_valid = ShiftRegister(io.dmem.resp.valid, dmemRespStages, Bool(true))
-  val dmem_resp_data = ShiftRegister(io.dmem.resp.bits.data, dmemRespStages, io.dmem.resp.valid)
+  val dmem_resp_valid = RegEnable(dmem_load_valid, io.dmem.hready) && io.dmem.hready
+  val dmem_resp_data = io.dmem.hrdata
   val dmem_lgen = new LoadGen32(dmem_load_mem_type, dmem_load_lowaddr, dmem_resp_data)
 
   // MUL/DIV
@@ -262,7 +262,7 @@ class Datapath extends Module with ZScaleParameters
 
   printf("Z%d: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
     io.host.id, csr.io.time(31, 0), !io.ctrl.killdx,
-    Reg(init=45,next=Mux(!io.imem.resp.valid, 73, 45)), // I -
+    Reg(init=45,next=Mux(!io.imem.hready, 73, 45)), // I -
     Reg(init=45,next=Mux(io.ctrl.br && io.ctrl.br_taken, 66, 45)), // B -
     Reg(init=45,next=Mux(io.ctrl.j, 74, 45)), // J -
     Reg(init=45,next=Mux(io.ctrl.invalidate, 86, 45)), // V -

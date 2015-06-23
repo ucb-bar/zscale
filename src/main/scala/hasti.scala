@@ -32,7 +32,7 @@ abstract trait HASTIConstants
   val SZ_HDATA = 32
 }
 
-abstract class HASTIMasterBase extends Bundle with HASTIConstants
+class HASTIMasterIO extends Bundle
 {
   val haddr     = UInt(OUTPUT, SZ_HADDR)
   val hwrite    = Bool(OUTPUT)
@@ -44,18 +44,24 @@ abstract class HASTIMasterBase extends Bundle with HASTIConstants
 
   val hwdata = Bits(OUTPUT, SZ_HDATA)
   val hrdata = Bits(INPUT, SZ_HDATA)
-}
 
-abstract class HASTISlaveBase extends HASTIMasterBase { flip() }
-
-class HASTIMasterIO extends HASTIMasterBase
-{
   val hready = Bool(INPUT)
   val hresp  = UInt(INPUT, SZ_HRESP)
 }
 
-class HASTISlaveIO extends HASTISlaveBase
+class HASTISlaveIO extends Bundle
 {
+  val haddr     = UInt(INPUT, SZ_HADDR)
+  val hwrite    = Bool(INPUT)
+  val hsize     = UInt(INPUT, SZ_HSIZE)
+  val hburst    = UInt(INPUT, SZ_HBURST)
+  val hprot     = UInt(INPUT, SZ_HPROT)
+  val htrans    = UInt(INPUT, SZ_HTRANS)
+  val hmastlock = Bool(INPUT)
+
+  val hwdata = Bits(INPUT, SZ_HDATA)
+  val hrdata = Bits(OUTPUT, SZ_HDATA)
+
   val hsel      = Bool(INPUT)
   val hreadyin  = Bool(INPUT)
   val hreadyout = Bool(OUTPUT)

@@ -59,13 +59,24 @@ class Control extends Module with ZScaleParameters
 {
   val io = new Bundle {
     val dpath = new CtrlDpathIO
-    val imem = new SRAMInstIO
-    val dmem = new SRAMDataIO
+    val imem = new HASTIMasterIO
+    val dmem = new HASTIMasterIO
     val dmem_fast_arb = Bool(OUTPUT)
     val host = new HTIFIO
   }
 
-  io.imem.req.valid := Bool(true)
+  io.imem.hwrite := Bool(false)
+  io.imem.hsize := UInt("b010")
+  io.imem.hburst := HBURST_SINGLE
+  io.imem.hprot := UInt("b0011")
+  io.imem.htrans := HTRANS_NONSEQ
+  io.imem.hmastlock := Bool(false)
+  assert(io.imem.hresp === HRESP_OKAY, "HASTI error response not supported yet!")
+
+  io.dmem.hburst := HBURST_SINGLE
+  io.dmem.hprot := UInt("b0011")
+  io.dmem.hmastlock := Bool(false)
+  assert(io.dmem.hresp === HRESP_OKAY, "HASTI error response not supported yet!")
 
   val id_valid = Reg(init = Bool(false))
 
@@ -202,8 +213,8 @@ class Control extends Module with ZScaleParameters
   io.dpath.xcpt := id_xcpt
   io.dpath.cause := id_cause
 
-  io.imem.invalidate.valid := id_retire_nomem && id_fence_i
-  io.dmem.req.valid := io.dpath.mem_valid
+  val imem_invalidate = id_retire_nomem && id_fence_i
+  io.dmem.htrans := Mux(io.dpath.mem_valid, HTRANS_NONSEQ, HTRANS_IDLE)
   io.dmem_fast_arb := id_ok && id_mem_valid
 
   when (!io.dpath.killdx && id_set_sb) {
@@ -214,19 +225,19 @@ class Control extends Module with ZScaleParameters
   }
 
   val scr_stall = io.dpath.csr_replay
-  val imem_stall = io.imem.invalidate.valid && !io.imem.invalidate.ready
-  val dmem_stall = io.dmem.req.valid && !io.dmem.req.ready
+  val imem_stall = Bool(false)
+  val dmem_stall = io.dpath.mem_valid && !io.dmem.hready
   val mul_stall = io.dpath.mul_valid && !io.dpath.mul_ready
 
   val br_taken = io.dpath.br && io.dpath.br_taken
   val redirect = io.dpath.j || br_taken || id_xcpt || io.dpath.csr_xcpt || io.dpath.csr_eret
-  io.dpath.stallf := !redirect && (!io.imem.resp.valid || io.imem.invalidate.valid || io.dpath.stalldx)
-  io.dpath.killf := !io.imem.resp.valid || io.imem.invalidate.valid || redirect
+  io.dpath.stallf := !redirect && (!io.imem.hready || imem_invalidate || io.dpath.stalldx)
+  io.dpath.killf := !io.imem.hready || imem_invalidate || redirect
   io.dpath.stalldx := sb_stall || scr_stall || imem_stall || dmem_stall || mul_stall
   io.dpath.killdx := !id_retire || io.dpath.stalldx
 
   // for logging purposes
-  io.dpath.invalidate := io.imem.invalidate.valid
+  io.dpath.invalidate := imem_invalidate
   io.dpath.sb_stall := sb_stall
   io.dpath.scr_stall := scr_stall
   io.dpath.imem_stall := imem_stall
