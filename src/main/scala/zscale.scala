@@ -8,30 +8,8 @@ import rocket._
 
 abstract trait ZScaleParameters extends UsesParameters
 {
-  val memAddrBits = params(MIFAddrBits)
-  val memDataBits = params(MIFDataBits)
-  val memDataBeats = params(MIFDataBeats)
-
-  val spadSize = 32768
-  require(isPow2(spadSize))
-  val spadWidth = memDataBits
-  val spadWordBytes = spadWidth / 8
-  val spadDepth = spadSize / spadWordBytes
-  val spadByteMaskBits = spadWordBytes
-  val spadAddrBits = log2Up(spadDepth)
-  val spadTagBits = 1
-
-  val spadRespStages = 0
-  val dmemRespStages = 0
-  val arbFast = true
-
   val xprLen = 32
-  val addrBits = log2Up(spadSize)
   val coreInstBits = params(CoreInstBits)
-  val coreInstBytes = coreInstBits / 8
-
-  val nSCR = params(HTIFNSCR)
-  require(log2Up(nSCR) <= 8)
 }
 
 class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZScaleParameters
