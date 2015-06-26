@@ -80,7 +80,7 @@ class Control extends Module with ZScaleParameters
   io.imem.htrans := HTRANS_NONSEQ
   io.imem.hmastlock := Bool(false)
 
-  val if_kill = Reg(init = Bool(false))
+  val if_kill = Reg(init = Bool(true))
   val id_valid = Reg(init = Bool(false))
 
   when (!io.dpath.stalldx) {

@@ -57,7 +57,7 @@ class Datapath extends Module with ZScaleParameters
   }
 
   val npc = UInt()
-  val pc = Reg(init = UInt(508, xprLen))
+  val pc = Reg(init = UInt("h1fc", xprLen))
   val id_br_target = UInt()
   val csr = Module(new rocket.CSRFile, {
     case UseVM => false
