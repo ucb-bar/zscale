@@ -11,32 +11,41 @@ import rocket.Instructions._
 
 class CtrlDpathIO extends Bundle with ZScaleParameters
 {
-  val j = Bool(OUTPUT)
-  val br = Bool(OUTPUT)
-  val sel_alu1 = UInt(OUTPUT, 2)
-  val sel_alu2 = UInt(OUTPUT, 3)
-  val sel_imm = UInt(OUTPUT, 3)
-  val fn_alu = UInt(OUTPUT, SZ_ALU_FN)
-  val wen = Bool(OUTPUT)
-  val csr_en = Bool(OUTPUT)
-  val csr_cmd = UInt(OUTPUT, CSR.SZ)
-  val mem_valid = Bool(OUTPUT)
-  val mem_rw = Bool(OUTPUT)
-  val mem_type = UInt(OUTPUT, MT_SZ)
-  val mul_valid = Bool(OUTPUT)
-  val xcpt = Bool(OUTPUT)
-  val cause = UInt(OUTPUT, xprLen)
-
   val stallf = Bool(OUTPUT)
   val killf = Bool(OUTPUT)
   val stalldx = Bool(OUTPUT)
   val killdx = Bool(OUTPUT)
+  val stallw = Bool(OUTPUT)
+
+  val id = new Bundle {
+    val j = Bool(OUTPUT)
+    val br = Bool(OUTPUT)
+    val sel_alu1 = UInt(OUTPUT, 2)
+    val sel_alu2 = UInt(OUTPUT, 3)
+    val sel_imm = UInt(OUTPUT, 3)
+    val fn_alu = UInt(OUTPUT, SZ_ALU_FN)
+    val wen = Bool(OUTPUT)
+    val csr_en = Bool(OUTPUT)
+    val csr_cmd = UInt(OUTPUT, CSR.SZ)
+    val mem_valid = Bool(OUTPUT)
+    val mem_rw = Bool(OUTPUT)
+    val mem_type = UInt(OUTPUT, MT_SZ)
+    val mul_valid = Bool(OUTPUT)
+    val xcpt = Bool(OUTPUT)
+    val cause = UInt(OUTPUT, xprLen)
+  }
+
+  val ll = new Bundle {
+    val valid = Bool(OUTPUT)
+    val waddr = UInt(OUTPUT, 5)
+    val fn = Bool(OUTPUT)
+    val mem_rw = Bool(OUTPUT)
+    val mem_type = UInt(OUTPUT, MT_SZ)
+  }
 
   val inst = Bits(INPUT, coreInstBits)
   val ma_pc = Bool(INPUT)
-  val fa_pc = Bool(INPUT)
   val ma_addr = Bool(INPUT)
-  val fa_addr = Bool(INPUT)
   val br_taken = Bool(INPUT)
   val mul_ready = Bool(INPUT)
   val clear_sb = Bool(INPUT)
@@ -46,13 +55,13 @@ class CtrlDpathIO extends Bundle with ZScaleParameters
   val csr_interrupt = Bool(INPUT)
   val csr_interrupt_cause = UInt(INPUT, xprLen)
 
-  // for logging purposes
-  val invalidate = Bool(OUTPUT)
-  val sb_stall = Bool(OUTPUT)
-  val scr_stall = Bool(OUTPUT)
-  val imem_stall = Bool(OUTPUT)
-  val dmem_stall = Bool(OUTPUT)
-  val mul_stall = Bool(OUTPUT)
+  val logging = new Bundle {
+    val invalidate = Bool(OUTPUT)
+    val sb_stall = Bool(OUTPUT)
+    val scr_stall = Bool(OUTPUT)
+    val dmem_stall = Bool(OUTPUT)
+    val mul_stall = Bool(OUTPUT)
+  }
 }
 
 class Control extends Module with ZScaleParameters
@@ -61,7 +70,6 @@ class Control extends Module with ZScaleParameters
     val dpath = new CtrlDpathIO
     val imem = new HASTIMasterIO
     val dmem = new HASTIMasterIO
-    val dmem_fast_arb = Bool(OUTPUT)
     val host = new HTIFIO
   }
 
@@ -71,13 +79,8 @@ class Control extends Module with ZScaleParameters
   io.imem.hprot := UInt("b0011")
   io.imem.htrans := HTRANS_NONSEQ
   io.imem.hmastlock := Bool(false)
-  assert(io.imem.hresp === HRESP_OKAY, "HASTI error response not supported yet!")
 
-  io.dmem.hburst := HBURST_SINGLE
-  io.dmem.hprot := UInt("b0011")
-  io.dmem.hmastlock := Bool(false)
-  assert(io.dmem.hresp === HRESP_OKAY, "HASTI error response not supported yet!")
-
+  val if_kill = Reg(init = Bool(false))
   val id_valid = Reg(init = Bool(false))
 
   when (!io.dpath.stalldx) {
@@ -160,87 +163,112 @@ class Control extends Module with ZScaleParameters
   val id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: cs3 = cs2
   val (id_set_sb: Bool) :: (id_mem_valid: Bool) :: (id_mem_rw: Bool) :: id_mem_type :: (id_mul_valid: Bool) :: Nil = cs3
 
-  val sb_stall = Reg(init = Bool(false))
-
-  // we need this because we're using RV64I's shift instruction format
-  val id_shift_valid = !id_shift_imm || io.dpath.inst(25) === Bits(0) // checking whether shamt's bit 6 is a zero
+  // ll stands for long-latency
+  val ll_valid = Reg(init = Bool(false))
+  val ll_waddr = Reg(UInt())
+  val ll_fn = Reg(Bool()) // 0:mem, 1:mul/div
+  val ll_mem_rw = Reg(Bool())
+  val ll_mem_type = Reg(UInt())
 
   val id_raddr1 = io.dpath.inst(19, 15)
+  val id_waddr = io.dpath.inst(11, 7)
   val id_csr_en = _id_csr != CSR.N
   val id_csr_ren = (_id_csr === CSR.S || _id_csr === CSR.C) && id_raddr1 === UInt(0)
   val id_csr = Mux(id_csr_ren, CSR.R, _id_csr)
 
+  val id_sb_stall = ll_valid
+  val id_scr_stall = io.dpath.csr_replay
+  val id_dmem_stall = io.dpath.id.mem_valid && !io.dmem.hready
+  val id_mul_stall = io.dpath.id.mul_valid && !io.dpath.mul_ready
+
+  // we need this because we're using RV64I's shift instruction format
+  val id_shift_valid = !id_shift_imm || io.dpath.inst(25) === Bits(0) // checking whether shamt's bit 6 is a zero
   val id_inst_valid = _id_inst_valid && id_shift_valid
-  val id_ok = !sb_stall && id_valid && id_inst_valid
+  val id_ok = !id_sb_stall && id_valid && id_inst_valid
 
   def checkExceptions(x: Seq[(Bool, UInt)]) =
     (x.map(_._1).reduce(_||_), PriorityMux(x))
 
-  when (io.dpath.csr_interrupt) {
-    id_valid := Bool(false)
-  }
+  val imem_bus_error = io.imem.hready && io.imem.hresp === HRESP_ERROR
+  val dmem_bus_error = io.dmem.hready && io.dmem.hresp === HRESP_ERROR
 
   val (id_xcpt_nomem, id_cause_nomem) = checkExceptions(List(
     (io.dpath.csr_interrupt, io.dpath.csr_interrupt_cause),
     (io.dpath.ma_pc, UInt(Causes.misaligned_fetch)),
-    (io.dpath.fa_pc, UInt(Causes.fault_fetch)),
-    (!sb_stall && id_valid && !id_inst_valid, UInt(Causes.illegal_instruction)) ))
+    (imem_bus_error, UInt(Causes.fault_fetch)),
+    (!id_sb_stall && id_valid && !id_inst_valid, UInt(Causes.illegal_instruction)) ))
 
   val (id_xcpt, id_cause) = checkExceptions(List(
     (id_xcpt_nomem, id_cause_nomem),
     (id_ok && id_mem_valid && !id_mem_rw && io.dpath.ma_addr, UInt(Causes.misaligned_load)),
     (id_ok && id_mem_valid &&  id_mem_rw && io.dpath.ma_addr, UInt(Causes.misaligned_store)),
-    (id_ok && id_mem_valid && !id_mem_rw && io.dpath.fa_addr, UInt(Causes.fault_load)),
-    (id_ok && id_mem_valid &&  id_mem_rw && io.dpath.fa_addr, UInt(Causes.fault_store)) ))
+    (dmem_bus_error && !ll_mem_rw, UInt(Causes.fault_load)),
+    (dmem_bus_error &&  ll_mem_rw, UInt(Causes.fault_store)) ))
 
   val id_retire_nomem_exclude_csr = id_ok && !id_xcpt_nomem
   val id_retire_nomem = id_retire_nomem_exclude_csr && !io.dpath.csr_xcpt
   val id_retire = id_ok && !id_xcpt && !io.dpath.csr_xcpt
 
-  io.dpath.j := id_retire_nomem && id_j
-  io.dpath.br := id_retire_nomem && id_br
-  io.dpath.sel_alu1 := id_sel_alu1
-  io.dpath.sel_alu2 := id_sel_alu2
-  io.dpath.sel_imm := id_sel_imm
-  io.dpath.fn_alu := id_fn_alu
-  io.dpath.wen := id_retire && id_wen
-  io.dpath.csr_en := id_retire_nomem && id_csr_en
-  io.dpath.csr_cmd := Mux(id_retire_nomem_exclude_csr, id_csr, CSR.N)
-  io.dpath.mem_valid := id_retire && id_mem_valid
-  io.dpath.mem_rw := id_mem_rw
-  io.dpath.mem_type := id_mem_type
-  io.dpath.mul_valid := id_retire_nomem && id_mul_valid
-  io.dpath.xcpt := id_xcpt
-  io.dpath.cause := id_cause
+  val id_imem_invalidate = id_retire_nomem && id_fence_i
+  val id_br_taken = io.dpath.id.br && io.dpath.br_taken
+  val id_redirect = io.dpath.id.j || id_br_taken || id_xcpt || io.dpath.csr_xcpt || io.dpath.csr_eret
+  when (id_redirect && !io.imem.hready) { if_kill := Bool(true) }
+  when (if_kill && io.imem.hready) { if_kill := Bool(false) }
 
-  val imem_invalidate = id_retire_nomem && id_fence_i
-  io.dmem.htrans := Mux(io.dpath.mem_valid, HTRANS_NONSEQ, HTRANS_IDLE)
-  io.dmem_fast_arb := id_ok && id_mem_valid
-
-  when (!io.dpath.killdx && id_set_sb) {
-    sb_stall := Bool(true)
-  }
-  when (io.dpath.clear_sb) {
-    sb_stall := Bool(false)
-  }
-
-  val scr_stall = io.dpath.csr_replay
-  val imem_stall = Bool(false)
-  val dmem_stall = io.dpath.mem_valid && !io.dmem.hready
-  val mul_stall = io.dpath.mul_valid && !io.dpath.mul_ready
-
-  val br_taken = io.dpath.br && io.dpath.br_taken
-  val redirect = io.dpath.j || br_taken || id_xcpt || io.dpath.csr_xcpt || io.dpath.csr_eret
-  io.dpath.stallf := !redirect && (!io.imem.hready || imem_invalidate || io.dpath.stalldx)
-  io.dpath.killf := !io.imem.hready || imem_invalidate || redirect
-  io.dpath.stalldx := sb_stall || scr_stall || imem_stall || dmem_stall || mul_stall
+  io.dpath.stallf := !id_redirect && (!io.imem.hready || id_imem_invalidate || io.dpath.stalldx || io.dpath.stallw)
+  io.dpath.killf := !io.imem.hready || if_kill || io.dpath.csr_interrupt || id_imem_invalidate || id_redirect
+  io.dpath.stalldx := id_sb_stall || id_scr_stall || id_dmem_stall || id_mul_stall || io.dpath.stallw
   io.dpath.killdx := !id_retire || io.dpath.stalldx
+  io.dpath.stallw := ll_valid && !ll_fn && !io.dmem.hready
 
-  // for logging purposes
-  io.dpath.invalidate := imem_invalidate
-  io.dpath.sb_stall := sb_stall
-  io.dpath.scr_stall := scr_stall
-  io.dpath.imem_stall := imem_stall
-  io.dpath.dmem_stall := dmem_stall
-  io.dpath.mul_stall := mul_stall
+  io.dpath.id.j := id_retire_nomem && id_j
+  io.dpath.id.br := id_retire_nomem && id_br
+  io.dpath.id.sel_alu1 := id_sel_alu1
+  io.dpath.id.sel_alu2 := id_sel_alu2
+  io.dpath.id.sel_imm := id_sel_imm
+  io.dpath.id.fn_alu := id_fn_alu
+  io.dpath.id.wen := id_retire && id_wen
+  io.dpath.id.csr_en := id_retire_nomem && id_csr_en
+  io.dpath.id.csr_cmd := Mux(id_retire_nomem_exclude_csr, id_csr, CSR.N)
+  io.dpath.id.mem_valid := id_retire && id_mem_valid
+  io.dpath.id.mem_rw := id_mem_rw
+  io.dpath.id.mem_type := id_mem_type
+  io.dpath.id.mul_valid := id_retire_nomem && id_mul_valid
+  io.dpath.id.xcpt := id_xcpt
+  io.dpath.id.cause := id_cause
+
+  io.dpath.ll.valid := ll_valid
+  io.dpath.ll.waddr := ll_waddr
+  io.dpath.ll.fn := ll_fn
+  io.dpath.ll.mem_rw := ll_mem_rw
+  io.dpath.ll.mem_type := ll_mem_type
+
+  io.dmem.hburst := HBURST_SINGLE
+  io.dmem.hprot := UInt("b0011")
+  io.dmem.hmastlock := Bool(false)
+  io.dmem.htrans := Mux(io.dpath.id.mem_valid, HTRANS_NONSEQ, HTRANS_IDLE)
+
+  // have to clear sb first before setting, because id_sb_stall is bypassed
+  when (io.dpath.clear_sb) {
+    ll_valid := Bool(false)
+  }
+
+  when (!io.dpath.killdx) {
+    when (id_set_sb) {
+      ll_valid := Bool(true)
+      ll_waddr := id_waddr
+      when (id_mem_valid) { ll_fn := Bool(false) }
+      when (id_mul_valid) { ll_fn := Bool(true) }
+    }
+    when (id_mem_valid) {
+      ll_mem_rw := id_mem_rw
+      ll_mem_type := id_mem_type
+    }
+  }
+
+  io.dpath.logging.invalidate := id_imem_invalidate
+  io.dpath.logging.sb_stall := id_sb_stall
+  io.dpath.logging.scr_stall := id_scr_stall
+  io.dpath.logging.dmem_stall := id_dmem_stall
+  io.dpath.logging.mul_stall := id_mul_stall
 }
