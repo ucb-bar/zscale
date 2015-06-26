@@ -103,17 +103,6 @@ class HASTIBus(amap: Seq[UInt=>Bool]) extends Module
   io.master.hresp := Mux1H(s1_hsels, io.slaves.map(_.hresp))
 }
 
-class HASTIRequest extends Bundle
-{
-  val haddr     = UInt(width = SZ_HADDR)
-  val hwrite    = Bool()
-  val hsize     = UInt(width = SZ_HSIZE)
-  val hburst    = UInt(width = SZ_HBURST)
-  val hprot     = UInt(width = SZ_HPROT)
-  val htrans    = UInt(width = SZ_HTRANS)
-  val hmastlock = Bool()
-}
-
 class HASTISlaveMux(n: Int) extends Module
 {
   val io = new Bundle {
