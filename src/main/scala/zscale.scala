@@ -39,20 +39,16 @@ class ZScale extends Module with ZScaleParameters {
   }
 
   val core = Module(new Core(resetSignal = io.host.reset), {case TLId => "L1ToL2"})
+  val ibus = Module(new HASTIBus(Seq(_=>Bool(true))))
+  val dbus = Module(new HASTIBus(Seq(_=>Bool(true))))
   val mux = Module(new HASTISlaveMux(2))
   val mem = Module(new HASTISRAM(8192))
 
   core.io.host <> io.host
 
-  mux.io.ins(0) <> core.io.dmem
-  core.io.dmem.hready := mux.io.ins(0).hreadyout
-  mux.io.ins(0).hsel := Bool(true)
-  mux.io.ins(0).hreadyin := mux.io.ins(0).hreadyout
-
-  mux.io.ins(1) <> core.io.imem
-  core.io.imem.hready := mux.io.ins(1).hreadyout
-  mux.io.ins(1).hsel := Bool(true)
-  mux.io.ins(1).hreadyin := mux.io.ins(1).hreadyout
-
+  ibus.io.master <> core.io.imem
+  dbus.io.master <> core.io.dmem
+  mux.io.ins(0) <> dbus.io.slaves(0)
+  mux.io.ins(1) <> ibus.io.slaves(0)
   mem.io <> mux.io.out
 }
