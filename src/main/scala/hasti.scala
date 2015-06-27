@@ -165,3 +165,18 @@ class HASTISlaveMux(n: Int) extends Module
     in.hresp := dgate(g1, io.out.hresp)
   } }
 }
+
+class HASTIXbar(n: Int, amap: Seq[UInt=>Bool]) extends Module
+{
+  val io = new Bundle {
+    val masters = Vec.fill(n){new HASTIMasterIO}.flip
+    val slaves = Vec.fill(amap.size){new HASTISlaveIO}.flip
+  }
+
+  val buses = io.masters map { m => Module(new HASTIBus(amap)).io }
+  val muxes = io.slaves map { s => Module(new HASTISlaveMux(n)).io }
+
+  (buses.map(_.master) zip io.masters) foreach { case (b, m) => b <> m }
+  (0 until n) map { m => (0 until amap.size) map { s => buses(m).slaves(s) <> muxes(s).ins(m) } }
+  (io.slaves zip muxes.map(_.out)) foreach { case (s, x) => s <> x }
+}
