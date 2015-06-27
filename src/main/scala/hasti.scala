@@ -25,7 +25,7 @@ abstract trait HASTIConstants
   val HRESP_ERROR   = UInt(1, SZ_HRESP)
 
   val SZ_HSIZE = 3
-  val SZ_HPROT = 3
+  val SZ_HPROT = 4
 
   // TODO: Parameterize
   val SZ_HADDR = 32
