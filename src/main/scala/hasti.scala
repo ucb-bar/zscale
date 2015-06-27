@@ -97,7 +97,9 @@ class HASTIBus(amap: Seq[UInt=>Bool]) extends Module
     s.hreadyin := io.master.hready
   } }
 
-  (s1_hsels zip hsels) foreach { case (r_hsel, hsel) => r_hsel := hsel }
+  (io.slaves zip s1_hsels zip hsels) foreach { case ((s, r_hsel), hsel) =>
+    when (s.hreadyout) { r_hsel := hsel }
+  }
 
   io.master.hrdata := Mux1H(s1_hsels, io.slaves.map(_.hrdata))
   io.master.hready := Mux1H(s1_hsels, io.slaves.map(_.hreadyout))
