@@ -36,12 +36,12 @@ class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with Z
 class ZScale extends Module with ZScaleParameters {
   val io = new Bundle {
     val host = new HTIFIO
+    val bootmem = new HASTISlaveIO().flip
+    val dram = new HASTISlaveIO().flip
   }
 
   val core = Module(new Core(resetSignal = io.host.reset), {case TLId => "L1ToL2"})
-  val bootmem = Module(new HASTISRAM(8192))
   val bootmemafn = (addr: UInt) => addr(31, 15).orR === Bool(false)
-  val dram = Module(new HASTISRAM(4194304))
   val dramafn = (addr: UInt) =>
     addr(31, 24) === UInt(1) || addr(31, 24) === UInt(2) ||
     addr(31, 24) === UInt(3) || addr(31, 24) === UInt(4)
@@ -50,6 +50,20 @@ class ZScale extends Module with ZScaleParameters {
   core.io.host <> io.host
   xbar.io.masters(0) <> core.io.dmem
   xbar.io.masters(1) <> core.io.imem
-  bootmem.io <> xbar.io.slaves(0)
-  dram.io <> xbar.io.slaves(1)
+  io.bootmem <> xbar.io.slaves(0)
+  io.dram <> xbar.io.slaves(1)
+}
+
+class ZScaleTest extends Module with ZScaleParameters {
+  val io = new Bundle {
+    val host = new HTIFIO
+  }
+
+  val zscale = Module(new ZScale)
+  val bootmem = Module(new HASTISRAM(8192))
+  val dram = Module(new HASTISRAM(4194304))
+
+  zscale.io.host <> io.host
+  bootmem.io <> zscale.io.bootmem
+  dram.io <> zscale.io.dram
 }
