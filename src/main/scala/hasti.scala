@@ -182,3 +182,23 @@ class HASTIXbar(n: Int, amap: Seq[UInt=>Bool]) extends Module
   (0 until n) map { m => (0 until amap.size) map { s => buses(m).slaves(s) <> muxes(s).ins(m) } }
   (io.slaves zip muxes.map(_.out)) foreach { case (s, x) => s <> x }
 }
+
+class HASTISlaveToMaster extends Module
+{
+  val io = new Bundle {
+    val in = new HASTISlaveIO
+    val out = new HASTIMasterIO
+  }
+
+  io.out.haddr := io.in.haddr
+  io.out.hwrite := io.in.hwrite
+  io.out.hsize := io.in.hsize
+  io.out.hburst := io.in.hburst
+  io.out.hprot := io.in.hprot
+  io.out.htrans := Mux(io.in.hsel && io.in.hreadyin, io.in.htrans, HTRANS_IDLE)
+  io.out.hmastlock := io.in.hmastlock
+  io.out.hwdata := io.in.hwdata
+  io.in.hrdata := io.out.hrdata
+  io.in.hreadyout := io.out.hready
+  io.in.hresp := io.out.hresp
+}
