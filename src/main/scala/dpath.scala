@@ -9,7 +9,7 @@ import rocket.Util._
 import rocket.ALU._
 
 // copied and modified from Rocket's datapath
-class ALU extends Module with ZScaleParameters
+class ALU extends Module with ZscaleParameters
 {
   val io = new Bundle {
     val fn = Bits(INPUT, SZ_ALU_FN)
@@ -47,7 +47,7 @@ class ALU extends Module with ZScaleParameters
   io.adder_out := sum
 }
 
-class Datapath extends Module with ZScaleParameters
+class Datapath extends Module with ZscaleParameters
 {
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip

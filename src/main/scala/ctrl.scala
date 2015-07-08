@@ -9,7 +9,7 @@ import rocket.Util._
 import rocket.ALU._
 import rocket.Instructions._
 
-class CtrlDpathIO extends Bundle with ZScaleParameters
+class CtrlDpathIO extends Bundle with ZscaleParameters
 {
   val stallf = Bool(OUTPUT)
   val killf = Bool(OUTPUT)
@@ -64,7 +64,7 @@ class CtrlDpathIO extends Bundle with ZScaleParameters
   }
 }
 
-class Control extends Module with ZScaleParameters
+class Control extends Module with ZscaleParameters
 {
   val io = new Bundle {
     val dpath = new CtrlDpathIO

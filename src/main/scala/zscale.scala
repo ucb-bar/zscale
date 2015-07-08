@@ -6,13 +6,13 @@ import Chisel._
 import uncore._
 import rocket._
 
-abstract trait ZScaleParameters extends UsesParameters
+abstract trait ZscaleParameters extends UsesParameters
 {
   val xprLen = 32
   val coreInstBits = params(CoreInstBits)
 }
 
-class Core(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZScaleParameters
+class Zscale(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZscaleParameters
 {
   val io = new Bundle {
     val imem = new HASTIMasterIO
