@@ -200,7 +200,8 @@ class Datapath extends Module with ZscaleParameters
   io.dmem.hsize := dmem_sgen.size
   io.dmem.hwdata := wb_wdata
 
-  val dmem_resp_valid = io.ctrl.ll.valid && !io.ctrl.ll.fn && !io.ctrl.ll.mem_rw && io.dmem.hready
+  val dmem_clear_sb = io.ctrl.ll.valid && !io.ctrl.ll.fn && io.dmem.hready
+  val dmem_resp_valid = dmem_clear_sb && !io.ctrl.ll.mem_rw
   val dmem_lgen = new LoadGen32(io.ctrl.ll.mem_type, dmem_load_lowaddr, io.dmem.hrdata)
 
   // MUL/DIV
@@ -241,7 +242,7 @@ class Datapath extends Module with ZscaleParameters
   io.ctrl.ma_addr := (dmem_req_addr(1) || dmem_req_addr(0)) && dmem_sgen.word || dmem_req_addr(0) && dmem_sgen.half
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := muldiv.io.req.ready
-  io.ctrl.clear_sb := dmem_resp_valid || muldiv.io.resp.valid
+  io.ctrl.clear_sb := dmem_clear_sb || muldiv.io.resp.valid
   io.ctrl.csr_replay := csr.io.csr_replay
   io.ctrl.csr_xcpt := csr.io.csr_xcpt
   io.ctrl.csr_eret := csr.io.eret
