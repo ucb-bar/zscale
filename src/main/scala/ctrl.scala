@@ -215,7 +215,7 @@ class Control extends Module with ZscaleParameters
   when (id_redirect && !io.imem.hready) { if_kill := Bool(true) }
   when (if_kill && io.imem.hready) { if_kill := Bool(false) }
 
-  io.dpath.stallf := !id_redirect && (!io.imem.hready || id_imem_invalidate || io.dpath.stalldx || io.dpath.stallw)
+  io.dpath.stallf := !id_redirect && (if_kill || !io.imem.hready || id_imem_invalidate || io.dpath.stalldx || io.dpath.stallw)
   io.dpath.killf := !io.imem.hready || if_kill || io.dpath.csr_interrupt || id_imem_invalidate || id_redirect
   io.dpath.stalldx := id_sb_stall || id_scr_stall || id_dmem_stall || id_mul_stall || io.dpath.stallw
   io.dpath.killdx := !id_retire || io.dpath.stalldx
