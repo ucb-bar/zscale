@@ -216,12 +216,14 @@ class HASTIXbar(n: Int, amap: Seq[UInt=>Bool]) extends Module
     val slaves = Vec.fill(amap.size){new HASTISlaveIO}.flip
   }
 
-  val buses = io.masters map { m => Module(new HASTIBus(amap)).io }
-  val muxes = io.slaves map { s => Module(new HASTISlaveMux(n)).io }
+  val buses = List.fill(n){Module(new HASTIBus(amap))}
+  val muxes = List.fill(amap.size){Module(new HASTISlaveMux(n))}
 
-  (buses.map(_.master) zip io.masters) foreach { case (b, m) => b <> m }
-  (0 until n) map { m => (0 until amap.size) map { s => buses(m).slaves(s) <> muxes(s).ins(m) } }
-  (io.slaves zip muxes.map(_.out)) foreach { case (s, x) => s <> x }
+  (buses.map(b => b.io.master) zip io.masters) foreach { case (b, m) => b <> m }
+  (muxes.map(m => m.io.out)    zip io.slaves ) foreach { case (x, s) => x <> s }
+  for (m <- 0 until n; s <- 0 until amap.size) yield {
+    buses(m).io.slaves(s) <> muxes(s).io.ins(m)
+  }
 }
 
 class HASTISlaveToMaster extends Module
