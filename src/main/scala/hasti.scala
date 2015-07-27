@@ -209,19 +209,19 @@ class HASTISlaveMux(n: Int) extends Module
   } }
 }
 
-class HASTIXbar(n: Int, amap: Seq[UInt=>Bool]) extends Module
+class HASTIXbar(nMasters: Int, addressMap: Seq[UInt=>Bool]) extends Module
 {
   val io = new Bundle {
-    val masters = Vec.fill(n){new HASTIMasterIO}.flip
-    val slaves = Vec.fill(amap.size){new HASTISlaveIO}.flip
+    val masters = Vec.fill(nMasters){new HASTIMasterIO}.flip
+    val slaves = Vec.fill(addressMap.size){new HASTISlaveIO}.flip
   }
 
-  val buses = List.fill(n){Module(new HASTIBus(amap))}
-  val muxes = List.fill(amap.size){Module(new HASTISlaveMux(n))}
+  val buses = List.fill(nMasters){Module(new HASTIBus(addressMap))}
+  val muxes = List.fill(addressMap.size){Module(new HASTISlaveMux(nMasters))}
 
   (buses.map(b => b.io.master) zip io.masters) foreach { case (b, m) => b <> m }
   (muxes.map(m => m.io.out)    zip io.slaves ) foreach { case (x, s) => x <> s }
-  for (m <- 0 until n; s <- 0 until amap.size) yield {
+  for (m <- 0 until nMasters; s <- 0 until addressMap.size) yield {
     buses(m).io.slaves(s) <> muxes(s).io.ins(m)
   }
 }
