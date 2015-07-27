@@ -178,33 +178,36 @@ class HASTISlaveMux(n: Int) extends Module
   io.out.hprot := Mux1H(grants, sel(Vec(io.ins.map(_.hprot)), skb_hprot))
   io.out.htrans := Mux1H(grants, sel(Vec(io.ins.map(_.htrans)), skb_htrans))
   io.out.hmastlock := Mux1H(grants, sel(Vec(io.ins.map(_.hmastlock)), skb_hmastlock))
-  io.out.hsel := (grants zip s1_grants).map{ case (g, g1) => g && g1 }.reduce(_||_)
+  io.out.hsel := grants.reduce(_||_)
 
   (io.ins zipWithIndex) map { case (in, i) => {
-    val g = grants(i)
-    val g1 = s1_grants(i)
-    when (io.out.hreadyout && g) {
-      skb_valid(i) := Bool(false)
-    }
-    when (io.out.hreadyout && g1 && !g) {
-      skb_valid(i) := in.hsel && in.hreadyin
-      skb_haddr(i) := in.haddr
-      skb_hwrite(i) := in.hwrite
-      skb_hsize(i) := in.hsize
-      skb_hburst(i) := in.hburst
-      skb_hprot(i) := in.hprot
-      skb_htrans(i) := in.htrans
-      skb_hmastlock(i) := in.hmastlock
+    when (io.out.hreadyout) {
+      when (grants(i)) {
+        skb_valid(i) := Bool(false)
+      }
+      when (!grants(i) && !skb_valid(i)) {
+        val valid = in.hsel && in.hreadyin
+        skb_valid(i) := valid
+        when (valid) { // clock-gate
+          skb_haddr(i) := in.haddr
+          skb_hwrite(i) := in.hwrite
+          skb_hsize(i) := in.hsize
+          skb_hburst(i) := in.hburst
+          skb_hprot(i) := in.hprot
+          skb_htrans(i) := in.htrans
+          skb_hmastlock(i) := in.hmastlock
+        }
+      }
     }
   } }
 
   io.out.hwdata := Mux1H(s1_grants, io.ins.map(_.hwdata))
-  io.out.hreadyin := Mux1H(s1_grants, io.ins.map(_.hreadyin))
+  io.out.hreadyin := io.out.hreadyout
 
   (io.ins zipWithIndex) foreach { case (in, i) => {
     val g1 = s1_grants(i)
     in.hrdata := dgate(g1, io.out.hrdata)
-    in.hreadyout := io.out.hreadyout && g1
+    in.hreadyout := io.out.hreadyout && (!skb_valid(i) || g1)
     in.hresp := dgate(g1, io.out.hresp)
   } }
 }
