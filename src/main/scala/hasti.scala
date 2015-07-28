@@ -115,29 +115,29 @@ class HASTIBus(amap: Seq[UInt=>Bool]) extends Module
     s.hreadyin := skb_valid || io.master.hready
   } }
 
-  val skid = (hsels zip io.slaves.map(_.hreadyout)).map{ case (s, r) => s && !r }.reduce(_||_)
-
-  skb_valid := skid
-
-  when (skid) {
-    skb_haddr := io.master.haddr
-    skb_hwrite := io.master.hwrite
-    skb_hsize := io.master.hsize
-    skb_hburst := io.master.hburst
-    skb_hprot := io.master.hprot
-    skb_htrans := io.master.htrans
-    skb_hmastlock := io.master.hmastlock
-  }
-
   val s1_hsels = Vec.fill(amap.size){Reg(init = Bool(false))}
+  val hreadyouts = io.slaves.map(_.hreadyout)
+  val master_hready = s1_hsels.reduce(_||_) === Bool(false) || Mux1H(s1_hsels, hreadyouts)
 
-  (s1_hsels zip hsels) foreach { case (s1, s) =>
-    when (!skid) { s1 := s }
+  when (master_hready) {
+    val skid = s1_hsels.reduce(_||_) && (hsels zip hreadyouts).map{ case (s, r) => s && !r }.reduce(_||_)
+    skb_valid := skid
+    when (skid) {
+      skb_haddr := io.master.haddr
+      skb_hwrite := io.master.hwrite
+      skb_hsize := io.master.hsize
+      skb_hburst := io.master.hburst
+      skb_hprot := io.master.hprot
+      skb_htrans := io.master.htrans
+      skb_hmastlock := io.master.hmastlock
+    }
+
+    (s1_hsels zip hsels) foreach { case (s1, s) =>
+      s1 := s
+    }
   }
 
-  val default_hready = s1_hsels.reduce(_||_) === Bool(false)
-  val slave_hready = Mux1H(s1_hsels, io.slaves.map(_.hreadyout))
-  io.master.hready := !skb_valid && (default_hready || slave_hready)
+  io.master.hready := !skb_valid && master_hready
   io.master.hrdata := Mux1H(s1_hsels, io.slaves.map(_.hrdata))
   io.master.hresp := Mux1H(s1_hsels, io.slaves.map(_.hresp))
 }
