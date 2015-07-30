@@ -1,1 +1,1 @@
-package object zscale extends HASTIConstants with POCIConstants
+package object zscale extends junctions.HASTIConstants with junctions.POCIConstants

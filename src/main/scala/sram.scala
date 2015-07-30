@@ -1,6 +1,7 @@
 package zscale
 
 import Chisel._
+import junctions._
 
 class HASTISRAM(depth: Int) extends Module with HASTIConstants
 {
