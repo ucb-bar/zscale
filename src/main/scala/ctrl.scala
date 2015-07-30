@@ -88,10 +88,11 @@ class Control extends Module with ZscaleParameters
     id_valid := !io.dpath.killf
   }
 
-  val cs = DecodeLogic(io.dpath.inst,
                 //  val j br si f.i csr    s_alu1   s_alu2   imm     fn       wen sb mem rw mtype  mul
                 //   |  |  |  |  |  |      |        |        |       |          |  |  |  |  |      |
-                List(N, X, X, X, X, CSR.X, A1_X,    A2_X,    IMM_X,  FN_X,      X, X, X, X, MT_X,  X), Array(
+  val decode_default: List[BitPat] =
+                List(N, X, X, X, X, CSR.X, A1_X,    A2_X,    IMM_X,  FN_X,      X, X, X, X, MT_X,  X)
+  val decode_table: Array[(BitPat, List[BitPat])] = Array(
       LUI->     List(Y, N, N, N, N, CSR.N, A1_ZERO, A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
       AUIPC->   List(Y, N, N, N, N, CSR.N, A1_PC,   A2_IMM,  IMM_U,  FN_ADD,    Y, N, N, X, MT_X,  N),
 
@@ -156,8 +157,9 @@ class Control extends Module with ZscaleParameters
       DIV->     List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_DIV,    N, Y, N, X, MT_X,  Y),
       DIVU->    List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_DIVU,   N, Y, N, X, MT_X,  Y),
       REM->     List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_REM,    N, Y, N, X, MT_X,  Y),
-      REMU->    List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_REMU,   N, Y, N, X, MT_X,  Y)
-    ))
+      REMU->    List(Y, N, N, N, N, CSR.N, A1_X,    A2_X,    IMM_X,  FN_REMU,   N, Y, N, X, MT_X,  Y))
+
+  val cs = DecodeLogic(io.dpath.inst, decode_default, decode_table)
 
   val (_id_inst_valid: Bool) :: (id_j: Bool) :: (id_br: Bool) :: (id_shift_imm: Bool) :: cs1 = cs
   val (id_fence_i: Bool) :: _id_csr :: cs2 = cs1
