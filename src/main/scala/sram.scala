@@ -7,7 +7,7 @@ class HASTISRAM(depth: Int) extends Module with HASTIConstants
 {
   val io = new HASTISlaveIO
 
-  val ram = Mem(Bits(width = SZ_HDATA), depth, seqRead = true)
+  val ram = SeqMem(Bits(width = SZ_HDATA), depth)
   val waddr = Reg(UInt(width = SZ_HADDR))
   val wdata = Reg(Bits(width = SZ_HDATA))
   val wvalid = Reg(init = Bool(false))
@@ -48,7 +48,7 @@ class HASTISRAM(depth: Int) extends Module with HASTIConstants
     }
   }
 
-  val rdata = ram(RegEnable(raddr, ren))
+  val rdata = ram.read(raddr, ren)
   val rmask = FillInterleaved(8,
     wmask_shift & Fill(SZ_HDATA / 8, bypass))
   io.hrdata := (wdata & rmask) | (rdata & ~rmask)

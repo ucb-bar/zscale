@@ -67,9 +67,9 @@ class Datapath extends Module with ZscaleParameters
   })
   val xcpt = io.ctrl.id.xcpt || io.ctrl.csr_xcpt
 
-  npc := Mux(io.ctrl.id.j || io.ctrl.id.br && io.ctrl.br_taken, id_br_target,
-         Mux(xcpt || io.ctrl.csr_eret, csr.io.evec,
-             pc + UInt(4))) & SInt(-2)
+  npc := (Mux(io.ctrl.id.j || io.ctrl.id.br && io.ctrl.br_taken, id_br_target,
+          Mux(xcpt || io.ctrl.csr_eret, csr.io.evec,
+              pc + UInt(4))).toSInt & SInt(-2)).toUInt
 
   when (!io.ctrl.stallf) {
     pc := npc
@@ -151,7 +151,7 @@ class Datapath extends Module with ZscaleParameters
 
   // BRANCH TARGET
   // jalr only takes rs1, jump and branches take pc
-  id_br_target := Mux(io.ctrl.id.j && io.ctrl.id.sel_imm === IMM_I, id_rs(0), id_pc) + id_imm
+  id_br_target := (Mux(io.ctrl.id.j && io.ctrl.id.sel_imm === IMM_I, id_rs(0), id_pc).toSInt + id_imm).toUInt
 
   // CSR
   val csr_operand = alu.io.adder_out
