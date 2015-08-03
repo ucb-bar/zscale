@@ -112,7 +112,7 @@ class Datapath extends Module with ZscaleParameters
   }
 
   // copied from Rocket's datapath
-  def imm(sel: Bits, inst: Bits) = {
+  def imm(sel: UInt, inst: UInt) = {
     val sign = inst(31).toSInt
     val b30_20 = Mux(sel === IMM_U, inst(30,20).toSInt, sign)
     val b19_12 = Mux(sel != IMM_U && sel != IMM_UJ, sign, inst(19,12).toSInt)
@@ -166,7 +166,7 @@ class Datapath extends Module with ZscaleParameters
   csr.io.pc := id_pc
 
   // DMEM
-  class StoreGen32(typ: Bits, addr: Bits, dat: Bits) {
+  class StoreGen32(typ: UInt, addr: UInt, dat: UInt) {
     val byte = typ === MT_B || typ === MT_BU
     val half = typ === MT_H || typ === MT_HU
     val word = typ === MT_W
@@ -180,7 +180,7 @@ class Datapath extends Module with ZscaleParameters
                 Fill(1, dat(31,0))))
   }
 
-  class LoadGen32(typ: Bits, addr: Bits, dat: Bits) {
+  class LoadGen32(typ: UInt, addr: UInt, dat: UInt) {
     val t = new StoreGen32(typ, addr, dat)
     val sign = typ === MT_B || typ === MT_H || typ === MT_W
 
