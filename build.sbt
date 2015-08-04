@@ -4,7 +4,7 @@ version := "1.0"
 
 name := "zscale"
 
-scalaVersion := "2.10.2"
+scalaVersion := "2.11.6"
 
 // Provide a managed dependency on X if -DXVersion="" is supplied on the command line.
 libraryDependencies ++= (Seq("chisel", "junctions", "uncore", "rocket").map {
