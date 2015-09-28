@@ -14,10 +14,10 @@ class ALU extends Module with ZscaleParameters
 {
   val io = new Bundle {
     val fn = Bits(INPUT, SZ_ALU_FN)
-    val in1 = Bits(INPUT, xprLen)
-    val in2 = Bits(INPUT, xprLen)
-    val out = Bits(OUTPUT, xprLen)
-    val adder_out = Bits(OUTPUT, xprLen)
+    val in1 = Bits(INPUT, xLen)
+    val in2 = Bits(INPUT, xLen)
+    val out = Bits(OUTPUT, xLen)
+    val adder_out = Bits(OUTPUT, xLen)
   }
 
   // ADD, SUB
@@ -26,14 +26,14 @@ class ALU extends Module with ZscaleParameters
   // SLT, SLTU
   val cmp = cmpInverted(io.fn) ^
     Mux(cmpEq(io.fn), sum === UInt(0),
-    Mux(io.in1(xprLen-1) === io.in2(xprLen-1), sum(xprLen-1),
-    Mux(cmpUnsigned(io.fn), io.in2(xprLen-1), io.in1(xprLen-1))))
+    Mux(io.in1(xLen-1) === io.in2(xLen-1), sum(xLen-1),
+    Mux(cmpUnsigned(io.fn), io.in2(xLen-1), io.in1(xLen-1))))
 
   // SLL, SRL, SRA
   val shamt = io.in2(4,0)
   val shin_r = io.in1
   val shin = Mux(io.fn === FN_SR  || io.fn === FN_SRA, shin_r, Reverse(shin_r))
-  val shout_r = (Cat(isSub(io.fn) & shin(xprLen-1), shin).toSInt >> shamt)(xprLen-1,0)
+  val shout_r = (Cat(isSub(io.fn) & shin(xLen-1), shin).toSInt >> shamt)(xLen-1,0)
   val shout_l = Reverse(shout_r)
 
   io.out :=
@@ -57,7 +57,7 @@ class Datapath extends Module with ZscaleParameters
     val host = new HTIFIO
   }
 
-  val pc = Reg(init = UInt("h1fc", xprLen))
+  val pc = Reg(init = UInt("h1fc", xLen))
   val id_br_target = Wire(UInt())
   val csr = Module(new rocket.CSRFile, {
     case UseVM => false
@@ -76,7 +76,7 @@ class Datapath extends Module with ZscaleParameters
 
   io.imem.haddr := Mux(io.ctrl.stallf, pc, npc)
 
-  val id_pc = Reg(UInt(width = xprLen))
+  val id_pc = Reg(UInt(width = xLen))
   val id_inst = Reg(Bits(width = coreInstBits))
 
   val wb_wen = Reg(init = Bool(false))
@@ -91,7 +91,7 @@ class Datapath extends Module with ZscaleParameters
 
   // copied from Rocket's datapath
   class RegFile {
-    private val rf = Mem(Bits(width = xprLen), 31)
+    private val rf = Mem(Bits(width = xLen), 31)
     private val reads = collection.mutable.ArrayBuffer[(UInt,UInt)]()
     private var canRead = true
     def read(addr: UInt) = {

@@ -33,7 +33,7 @@ class CtrlDpathIO extends Bundle with ZscaleParameters
     val mem_type = UInt(OUTPUT, MT_SZ)
     val mul_valid = Bool(OUTPUT)
     val xcpt = Bool(OUTPUT)
-    val cause = UInt(OUTPUT, xprLen)
+    val cause = UInt(OUTPUT, xLen)
   }
 
   val ll = new Bundle {
@@ -54,7 +54,7 @@ class CtrlDpathIO extends Bundle with ZscaleParameters
   val csr_xcpt = Bool(INPUT)
   val csr_eret = Bool(INPUT)
   val csr_interrupt = Bool(INPUT)
-  val csr_interrupt_cause = UInt(INPUT, xprLen)
+  val csr_interrupt_cause = UInt(INPUT, xLen)
 
   val logging = new Bundle {
     val invalidate = Bool(OUTPUT)

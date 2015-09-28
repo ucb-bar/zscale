@@ -9,7 +9,7 @@ import rocket._
 
 abstract trait ZscaleParameters extends UsesParameters
 {
-  val xprLen = 32
+  val xLen = 32
   val coreInstBits = params(CoreInstBits)
 }
 
