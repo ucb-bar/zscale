@@ -160,11 +160,11 @@ class Control extends Module with ZscaleParameters
       CSRRCI->    List(Y, N, N, N, CSR.C, A1_ZERO, A2_IMM,  IMM_Z,  FN_ADD,    Y, N, N, N, N, X, MT_X,  N))
 
   val decodeTable = intDecodeTable ++
-    (if (haveMulDiv) mulDivDecodeTable else Array[(BitPat, List[BitPat])]())
+    (if (haveMExt) mulDivDecodeTable else Array[(BitPat, List[BitPat])]())
 
   val cs = DecodeLogic(io.dpath.inst, decode_default, decodeTable)
 
-  val (_id_inst_valid: Bool) :: (id_j: Bool) :: (id_br: Bool) :: cs1 = cs
+  val (id_opcode_valid: Bool) :: (id_j: Bool) :: (id_br: Bool) :: cs1 = cs
   val (id_fence_i: Bool) :: _id_csr :: cs2 = cs1
   val id_sel_alu1 :: id_sel_alu2 :: id_sel_imm :: id_fn_alu :: (id_wen: Bool) :: (id_ren1: Bool) :: (id_ren2: Bool) :: cs3 = cs2
   val (id_set_sb: Bool) :: (id_mem_valid: Bool) :: (id_mem_rw: Bool) :: id_mem_type :: (id_mul_valid: Bool) :: Nil = cs3
@@ -176,8 +176,9 @@ class Control extends Module with ZscaleParameters
   val ll_mem_rw = Reg(Bool())
   val ll_mem_type = Reg(UInt())
 
-  val id_raddr1 = io.dpath.inst(19, 15)
   val id_waddr = io.dpath.inst(11, 7)
+  val id_raddr1 = io.dpath.inst(19, 15)
+  val id_raddr2 = io.dpath.inst(24, 20)
   val id_csr_en = _id_csr != CSR.N
   val id_csr_ren = (_id_csr === CSR.S || _id_csr === CSR.C) && id_raddr1 === UInt(0)
   val id_csr = Mux(id_csr_ren, CSR.R, _id_csr)
@@ -187,7 +188,10 @@ class Control extends Module with ZscaleParameters
   val id_dmem_stall = io.dpath.id.mem_valid && !io.dmem.hready
   val id_mul_stall = io.dpath.id.mul_valid && !io.dpath.mul_ready
 
-  val id_inst_valid = _id_inst_valid
+  val id_regs_valid =
+    if (!haveEExt) Bool(true)
+    else !((id_wen && id_waddr(4)) || (id_ren1 && id_raddr1(4)) || (id_ren2 && id_raddr2(4)))
+  val id_inst_valid = id_opcode_valid && id_regs_valid
   val id_ok = !id_sb_stall && id_valid && id_inst_valid
 
   def checkExceptions(x: Seq[(Bool, UInt)]) =

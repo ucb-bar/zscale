@@ -91,19 +91,21 @@ class Datapath extends Module with ZscaleParameters
 
   // copied from Rocket's datapath
   class RegFile {
-    private val rf = Mem(Bits(width = xLen), 31)
+    private val n = if (haveEExt) 15 else 31
+    private val rf = Mem(Bits(width = xLen), n)
+    private def access(addr: UInt) = rf(~addr(log2Up(n)-1,0))
     private val reads = collection.mutable.ArrayBuffer[(UInt,UInt)]()
     private var canRead = true
     def read(addr: UInt) = {
       require(canRead)
       reads += addr -> Wire(UInt())
-      reads.last._2 := Mux(addr != UInt(0), rf(~addr), Bits(0))
+      reads.last._2 := Mux(addr != UInt(0), access(addr), Bits(0))
       reads.last._2
     }
     def write(addr: UInt, data: UInt) = {
       canRead = false
       when (addr != UInt(0)) {
-        rf(~addr) := data
+        access(addr) := data
         for ((raddr, rdata) <- reads)
           when (addr === raddr) { rdata := data }
       }
@@ -205,7 +207,7 @@ class Datapath extends Module with ZscaleParameters
   val dmem_lgen = new LoadGen32(io.ctrl.ll.mem_type, dmem_load_lowaddr, io.dmem.hrdata)
 
   // MUL/DIV
-  val (mulDivRespValid, mulDivRespData, mulDivReqReady) = if (haveMulDiv) {
+  val (mulDivRespValid, mulDivRespData, mulDivReqReady) = if (haveMExt) {
     val muldiv = Module(new MulDiv(
         mulUnroll = if(params(FastMulDiv)) 8 else 1,
         earlyOut = params(FastMulDiv)), { case XLen => 32 })

@@ -13,7 +13,8 @@ abstract trait ZscaleParameters extends UsesParameters
   val coreInstBits = params(CoreInstBits)
 
   // these should become parameters, rather than constants
-  val haveMulDiv = true
+  val haveMExt = true
+  val haveEExt = false
 }
 
 class Zscale(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZscaleParameters
