@@ -11,7 +11,7 @@ class HASTISRAM(depth: Int) extends Module with HASTIConstants
   val waddr = Reg(UInt(width = SZ_HADDR))
   val wvalid = Reg(init = Bool(false))
   val wsize = Reg(UInt(width = SZ_HSIZE))
-  val ram = SeqMem(wdata, depth)
+  val ram = SeqMem(Vec(Bits(width = 8), SZ_HDATA/8), depth)
 
   val wmask_lut = MuxLookup(wsize, Bits(0xf), Seq(
         UInt(0) -> Bits(0x1),
@@ -27,10 +27,8 @@ class HASTISRAM(depth: Int) extends Module with HASTIConstants
   }
 
   val raddr = io.haddr >> UInt(2)
-  val ren = Bool()
+  val ren = Wire(init=Bool(false))
   val bypass = Reg(Bool())
-
-  ren := Bool(false)
 
   when (io.hsel && (io.htrans === HTRANS_NONSEQ)) {
     when (io.hwrite) {

@@ -57,9 +57,8 @@ class Datapath extends Module with ZscaleParameters
     val host = new HTIFIO
   }
 
-  val npc = UInt()
   val pc = Reg(init = UInt("h1fc", xprLen))
-  val id_br_target = UInt()
+  val id_br_target = Wire(UInt())
   val csr = Module(new rocket.CSRFile, {
     case UseVM => false
     case XLen => 32
@@ -67,9 +66,9 @@ class Datapath extends Module with ZscaleParameters
   })
   val xcpt = io.ctrl.id.xcpt || io.ctrl.csr_xcpt
 
-  npc := (Mux(io.ctrl.id.j || io.ctrl.id.br && io.ctrl.br_taken, id_br_target,
-          Mux(xcpt || io.ctrl.csr_eret, csr.io.evec,
-              pc + UInt(4))).toSInt & SInt(-2)).toUInt
+  val npc = (Mux(io.ctrl.id.j || io.ctrl.id.br && io.ctrl.br_taken, id_br_target,
+             Mux(xcpt || io.ctrl.csr_eret, csr.io.evec,
+                 pc + UInt(4))).toSInt & SInt(-2)).toUInt
 
   when (!io.ctrl.stallf) {
     pc := npc
@@ -97,7 +96,7 @@ class Datapath extends Module with ZscaleParameters
     private var canRead = true
     def read(addr: UInt) = {
       require(canRead)
-      reads += addr -> UInt()
+      reads += addr -> Wire(UInt())
       reads.last._2 := Mux(addr != UInt(0), rf(~addr), Bits(0))
       reads.last._2
     }
@@ -141,13 +140,13 @@ class Datapath extends Module with ZscaleParameters
   alu.io.fn := io.ctrl.id.fn_alu
   alu.io.in1 := MuxLookup(io.ctrl.id.sel_alu1, SInt(0), Seq(
       A1_RS1 -> id_rs(0).toSInt,
-      A1_PC -> id_pc
-    ))
+      A1_PC -> id_pc.toSInt
+    )).toUInt
   alu.io.in2 := MuxLookup(io.ctrl.id.sel_alu2, SInt(0), Seq(
       A2_FOUR -> SInt(4),
       A2_RS2 -> id_rs(1).toSInt,
       A2_IMM -> id_imm
-    ))
+    )).toUInt
 
   // BRANCH TARGET
   // jalr only takes rs1, jump and branches take pc
