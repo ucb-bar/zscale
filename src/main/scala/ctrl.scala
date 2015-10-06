@@ -10,8 +10,7 @@ import rocket.Util._
 import rocket.ALU._
 import rocket.Instructions._
 
-class CtrlDpathIO extends Bundle with ZscaleParameters
-{
+class CtrlDpathIO(implicit p: Parameters) extends ZscaleBundle {
   val stallf = Bool(OUTPUT)
   val killf = Bool(OUTPUT)
   val stalldx = Bool(OUTPUT)
@@ -65,13 +64,12 @@ class CtrlDpathIO extends Bundle with ZscaleParameters
   }
 }
 
-class Control extends Module with ZscaleParameters
-{
+class Control(implicit p: Parameters) extends ZscaleModule()(p) {
   val io = new Bundle {
     val dpath = new CtrlDpathIO
-    val imem = new HASTIMasterIO
-    val dmem = new HASTIMasterIO
-    val host = new HTIFIO
+    val imem = new HastiMasterIO
+    val dmem = new HastiMasterIO
+    val host = new HtifIO
   }
 
   io.imem.hwrite := Bool(false)

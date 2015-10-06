@@ -10,8 +10,7 @@ import rocket.Util._
 import rocket.ALU._
 
 // copied and modified from Rocket's datapath
-class ALU extends Module with ZscaleParameters
-{
+class ALU(implicit p: Parameters) extends ZscaleModule()(p) {
   val io = new Bundle {
     val fn = Bits(INPUT, SZ_ALU_FN)
     val in1 = Bits(INPUT, xLen)
@@ -48,13 +47,12 @@ class ALU extends Module with ZscaleParameters
   io.adder_out := sum
 }
 
-class Datapath extends Module with ZscaleParameters
-{
+class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip
-    val imem = new HASTIMasterIO
-    val dmem = new HASTIMasterIO
-    val host = new HTIFIO
+    val imem = new HastiMasterIO
+    val dmem = new HastiMasterIO
+    val host = new HtifIO
   }
 
   val pc = Reg(init = UInt("h1fc", xLen))
@@ -208,9 +206,9 @@ class Datapath extends Module with ZscaleParameters
 
   // MUL/DIV
   val (mulDivRespValid, mulDivRespData, mulDivReqReady) = if (haveMExt) {
-    val muldiv = Module(new MulDiv(
-        mulUnroll = if(params(FastMulDiv)) 8 else 1,
-        earlyOut = params(FastMulDiv)), { case XLen => 32 })
+    val muldiv = Module(new MulDiv(width = xLen,
+                                   unroll = if(fastMulDiv) 8 else 1,
+                                   earlyOut = fastMulDiv))
     muldiv.io.req.valid := io.ctrl.id.mul_valid
     muldiv.io.req.bits.fn := io.ctrl.id.fn_alu
     muldiv.io.req.bits.dw := DW_64

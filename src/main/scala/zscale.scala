@@ -7,22 +7,28 @@ import junctions._
 import uncore._
 import rocket._
 
-abstract trait ZscaleParameters extends UsesParameters
-{
+trait HasZscaleParameters {
+  implicit val p: Parameters
   val xLen = 32
-  val coreInstBits = params(CoreInstBits)
+  val coreInstBits = p(CoreInstBits)
+  val fastMulDiv = p(FastMulDiv)
 
   // these should become parameters, rather than constants
   val haveMExt = true
   val haveEExt = false
 }
 
-class Zscale(resetSignal: Bool = null) extends Module(_reset = resetSignal) with ZscaleParameters
-{
+abstract class ZscaleModule(implicit val p: Parameters) extends Module
+  with HasZscaleParameters
+abstract class ZscaleBundle(implicit val p: Parameters) extends junctions.ParameterizedBundle()(p)
+  with HasZscaleParameters
+
+class Zscale(resetSignal: Bool = null)(implicit val p: Parameters) extends Module(_reset = resetSignal)
+    with HasZscaleParameters {
   val io = new Bundle {
-    val imem = new HASTIMasterIO
-    val dmem = new HASTIMasterIO
-    val host = new HTIFIO
+    val imem = new HastiMasterIO
+    val dmem = new HastiMasterIO
+    val host = new HtifIO
   }
 
   val ctrl = Module(new Control)
