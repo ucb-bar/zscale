@@ -165,31 +165,6 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   csr.io.pc := id_pc
 
   // DMEM
-  class StoreGen32(typ: UInt, addr: UInt, dat: UInt) {
-    val byte = typ === MT_B || typ === MT_BU
-    val half = typ === MT_H || typ === MT_HU
-    val word = typ === MT_W
-    def size =
-      Mux(byte, UInt("b000"),
-      Mux(half, UInt("b001"),
-                UInt("b010")))
-    def data =
-      Mux(byte, Fill(4, dat( 7,0)),
-      Mux(half, Fill(2, dat(15,0)),
-                Fill(1, dat(31,0))))
-  }
-
-  class LoadGen32(typ: UInt, addr: UInt, dat: UInt) {
-    val t = new StoreGen32(typ, addr, dat)
-    val sign = typ === MT_B || typ === MT_H || typ === MT_W
-
-    val word = dat
-    val halfShift = Mux(addr(1), word(31,16), word(15,0))
-    val half = Cat(Mux(t.half, Fill(16, sign && halfShift(15)), word(31,16)), halfShift)
-    val byteShift = Mux(addr(0), half(15,8), half(7,0))
-    val byte = Cat(Mux(t.byte, Fill(24, sign && byteShift(7)), half(31,8)), byteShift)
-  }
-
   val dmem_req_addr = alu.io.adder_out
   val dmem_sgen = new StoreGen32(io.ctrl.id.mem_type, dmem_req_addr, id_rs(1))
   val dmem_load_lowaddr = RegEnable(dmem_req_addr(1, 0), io.ctrl.id.mem_valid && !io.ctrl.id.mem_rw)
