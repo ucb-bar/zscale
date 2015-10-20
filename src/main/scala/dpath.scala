@@ -57,11 +57,11 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
 
   val pc = Reg(init = UInt("h1fc", xLen))
   val id_br_target = Wire(UInt())
-  val csr = Module(new rocket.CSRFile, {
+  val csr = Module(new rocket.CSRFile()(p.alterPartial({
     case UseVM => false
     case XLen => 32
-    case BuildFPU => None
-  })
+    case UseFPU => false
+  })))
   val xcpt = io.ctrl.id.xcpt || io.ctrl.csr_xcpt
 
   val npc = (Mux(io.ctrl.id.j || io.ctrl.id.br && io.ctrl.br_taken, id_br_target,
