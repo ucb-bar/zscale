@@ -3,6 +3,7 @@
 package zscale
 
 import Chisel._
+import cde.Parameters
 import junctions._
 import uncore._
 import rocket._

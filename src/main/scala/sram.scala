@@ -1,6 +1,7 @@
 package zscale
 
 import Chisel._
+import cde.Parameters
 import junctions._
 
 class HastiSRAM(depth: Int)(implicit p: Parameters) extends HastiModule()(p) {
