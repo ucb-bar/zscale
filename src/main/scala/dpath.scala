@@ -88,53 +88,11 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
     id_inst := io.imem.hrdata
   }
 
-  // copied from Rocket's datapath
-  class RegFile {
-    private val n = if (haveEExt) 15 else 31
-    private val rf = Mem(Bits(width = xLen), n)
-    private def access(addr: UInt) = rf(~addr(log2Up(n)-1,0))
-    private val reads = collection.mutable.ArrayBuffer[(UInt,UInt)]()
-    private var canRead = true
-    def read(addr: UInt) = {
-      require(canRead)
-      reads += addr -> Wire(UInt())
-      reads.last._2 := Mux(addr != UInt(0), access(addr), Bits(0))
-      reads.last._2
-    }
-    def write(addr: UInt, data: UInt) = {
-      canRead = false
-      when (addr != UInt(0)) {
-        access(addr) := data
-        for ((raddr, rdata) <- reads)
-          when (addr === raddr) { rdata := data }
-      }
-    }
-  }
-
-  // copied from Rocket's datapath
-  def imm(sel: UInt, inst: UInt) = {
-    val sign = inst(31).toSInt
-    val b30_20 = Mux(sel === IMM_U, inst(30,20).toSInt, sign)
-    val b19_12 = Mux(sel != IMM_U && sel != IMM_UJ, sign, inst(19,12).toSInt)
-    val b11 = Mux(sel === IMM_U || sel === IMM_Z, SInt(0),
-              Mux(sel === IMM_UJ, inst(20).toSInt,
-              Mux(sel === IMM_SB, inst(7).toSInt, sign)))
-    val b10_5 = Mux(sel === IMM_U || sel === IMM_Z, Bits(0), inst(30,25))
-    val b4_1 = Mux(sel === IMM_U, Bits(0),
-               Mux(sel === IMM_S || sel === IMM_SB, inst(11,8),
-               Mux(sel === IMM_Z, inst(19,16), inst(24,21))))
-    val b0 = Mux(sel === IMM_S, inst(7),
-             Mux(sel === IMM_I, inst(20),
-             Mux(sel === IMM_Z, inst(15), Bits(0))))
-
-    Cat(sign, b30_20, b19_12, b11, b10_5, b4_1, b0).toSInt
-  }
-
-  val rf = new RegFile
+  val rf = new RegFile(if (haveEExt) 15 else 31, 32, true)
   val id_addr = Vec(id_inst(19, 15), id_inst(24,20))
   val id_rs = id_addr.map(rf.read _)
   val id_rd = id_inst(11, 7)
-  val id_imm = imm(io.ctrl.id.sel_imm, id_inst)
+  val id_imm = ImmGen(io.ctrl.id.sel_imm, id_inst)
 
   // ALU
   val alu = Module(new ALU)
