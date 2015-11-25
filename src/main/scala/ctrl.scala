@@ -50,7 +50,6 @@ class CtrlDpathIO(implicit p: Parameters) extends ZscaleBundle {
   val br_taken = Bool(INPUT)
   val mul_ready = Bool(INPUT)
   val clear_sb = Bool(INPUT)
-  val csr_replay = Bool(INPUT)
   val csr_xcpt = Bool(INPUT)
   val csr_eret = Bool(INPUT)
   val csr_interrupt = Bool(INPUT)
@@ -59,7 +58,6 @@ class CtrlDpathIO(implicit p: Parameters) extends ZscaleBundle {
   val logging = new Bundle {
     val invalidate = Bool(OUTPUT)
     val sb_stall = Bool(OUTPUT)
-    val scr_stall = Bool(OUTPUT)
     val dmem_stall = Bool(OUTPUT)
     val mul_stall = Bool(OUTPUT)
   }
@@ -183,7 +181,6 @@ class Control(implicit p: Parameters) extends ZscaleModule()(p) {
   val id_csr = Mux(id_csr_ren, CSR.R, _id_csr)
 
   val id_sb_stall = ll_valid
-  val id_scr_stall = io.dpath.csr_replay
   val id_dmem_stall = io.dpath.id.mem_valid && !io.dmem.hready
   val id_mul_stall = io.dpath.id.mul_valid && !io.dpath.mul_ready
 
@@ -224,7 +221,7 @@ class Control(implicit p: Parameters) extends ZscaleModule()(p) {
 
   io.dpath.stallf := !id_redirect && (if_kill || !io.imem.hready || id_imem_invalidate || io.dpath.stalldx || io.dpath.stallw)
   io.dpath.killf := !io.imem.hready || if_kill || io.dpath.csr_interrupt || id_imem_invalidate || id_redirect
-  io.dpath.stalldx := id_sb_stall || id_scr_stall || id_dmem_stall || id_mul_stall || io.dpath.stallw
+  io.dpath.stalldx := id_sb_stall || id_dmem_stall || id_mul_stall || io.dpath.stallw
   io.dpath.killdx := !id_retire || io.dpath.stalldx
   io.dpath.stallw := ll_valid && !ll_fn && !io.dmem.hready
 
@@ -275,7 +272,6 @@ class Control(implicit p: Parameters) extends ZscaleModule()(p) {
 
   io.dpath.logging.invalidate := id_imem_invalidate
   io.dpath.logging.sb_stall := id_sb_stall
-  io.dpath.logging.scr_stall := id_scr_stall
   io.dpath.logging.dmem_stall := id_dmem_stall
   io.dpath.logging.mul_stall := id_mul_stall
 }

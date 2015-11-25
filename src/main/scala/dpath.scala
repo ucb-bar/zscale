@@ -181,7 +181,6 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := mulDivReqReady
   io.ctrl.clear_sb := dmem_clear_sb || mulDivRespValid
-  io.ctrl.csr_replay := csr.io.csr_replay
   io.ctrl.csr_xcpt := csr.io.csr_xcpt
   io.ctrl.csr_eret := csr.io.eret
   io.ctrl.csr_interrupt := csr.io.interrupt
@@ -196,7 +195,6 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
     Reg(init=45,next=Mux(io.ctrl.csr_eret, 83, 45)), // S -
     Reg(init=45,next=Mux(xcpt, 88, 45)), // X -
     Mux(io.ctrl.logging.sb_stall, 83, 45), // S -
-    Mux(io.ctrl.logging.scr_stall, 67, 45), // C -
     Mux(io.ctrl.logging.dmem_stall, 68, 45), // D -
     Mux(io.ctrl.logging.mul_stall, 77, 45), // M -
     Mux(xcpt, 88, 45), // X -
