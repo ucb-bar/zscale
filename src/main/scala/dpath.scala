@@ -10,44 +10,6 @@ import rocket._
 import rocket.Util._
 import rocket.ALU._
 
-// copied and modified from Rocket's datapath
-class ALU(implicit p: Parameters) extends ZscaleModule()(p) {
-  val io = new Bundle {
-    val fn = Bits(INPUT, SZ_ALU_FN)
-    val in1 = Bits(INPUT, xLen)
-    val in2 = Bits(INPUT, xLen)
-    val out = Bits(OUTPUT, xLen)
-    val adder_out = Bits(OUTPUT, xLen)
-  }
-
-  // ADD, SUB
-  val sum = io.in1 + Mux(isSub(io.fn), -io.in2, io.in2)
-
-  // SLT, SLTU
-  val cmp = cmpInverted(io.fn) ^
-    Mux(cmpEq(io.fn), sum === UInt(0),
-    Mux(io.in1(xLen-1) === io.in2(xLen-1), sum(xLen-1),
-    Mux(cmpUnsigned(io.fn), io.in2(xLen-1), io.in1(xLen-1))))
-
-  // SLL, SRL, SRA
-  val shamt = io.in2(4,0)
-  val shin_r = io.in1
-  val shin = Mux(io.fn === FN_SR  || io.fn === FN_SRA, shin_r, Reverse(shin_r))
-  val shout_r = (Cat(isSub(io.fn) & shin(xLen-1), shin).toSInt >> shamt)(xLen-1,0)
-  val shout_l = Reverse(shout_r)
-
-  io.out :=
-    Mux(io.fn === FN_ADD || io.fn === FN_SUB,  sum,
-    Mux(io.fn === FN_SR  || io.fn === FN_SRA,  shout_r,
-    Mux(io.fn === FN_SL,                       shout_l,
-    Mux(io.fn === FN_AND,                      io.in1 & io.in2,
-    Mux(io.fn === FN_OR,                       io.in1 | io.in2,
-    Mux(io.fn === FN_XOR,                      io.in1 ^ io.in2,
-                /* all comparisons */          cmp))))))
-
-  io.adder_out := sum
-}
-
 class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   val io = new Bundle {
     val ctrl = new CtrlDpathIO().flip
@@ -95,7 +57,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   val id_imm = ImmGen(io.ctrl.id.sel_imm, id_inst)
 
   // ALU
-  val alu = Module(new ALU)
+  val alu = Module(new ALU(xLen))
   alu.io.fn := io.ctrl.id.fn_alu
   alu.io.in1 := MuxLookup(io.ctrl.id.sel_alu1, SInt(0), Seq(
       A1_RS1 -> id_rs(0).toSInt,
