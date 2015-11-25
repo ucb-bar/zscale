@@ -167,7 +167,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
 
   // DMEM
   val dmem_req_addr = alu.io.adder_out
-  val dmem_sgen = new StoreGen32(io.ctrl.id.mem_type, dmem_req_addr, id_rs(1))
+  val dmem_sgen = new StoreGen(io.ctrl.id.mem_type, dmem_req_addr, id_rs(1), 4)
   val dmem_load_lowaddr = RegEnable(dmem_req_addr(1, 0), io.ctrl.id.mem_valid && !io.ctrl.id.mem_rw)
   when (io.ctrl.id.mem_valid && io.ctrl.id.mem_rw) { wb_wdata := dmem_sgen.data } // share wb_wdata with store data
 
@@ -178,7 +178,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
 
   val dmem_clear_sb = io.ctrl.ll.valid && !io.ctrl.ll.fn && io.dmem.hready
   val dmem_resp_valid = dmem_clear_sb && !io.ctrl.ll.mem_rw
-  val dmem_lgen = new LoadGen32(io.ctrl.ll.mem_type, dmem_load_lowaddr, io.dmem.hrdata)
+  val dmem_lgen = new LoadGen(io.ctrl.ll.mem_type, dmem_load_lowaddr, io.dmem.hrdata, Bool(false), 4)
 
   // MUL/DIV
   val (mulDivRespValid, mulDivRespData, mulDivReqReady) = if (haveMExt) {
@@ -202,7 +202,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   val wdata = MuxCase(
     alu.io.out, Array(
       io.ctrl.id.csr_en -> csr.io.rw.rdata,
-      dmem_resp_valid -> dmem_lgen.byte,
+      dmem_resp_valid -> dmem_lgen.data,
       mulDivRespValid -> mulDivRespData
     ))
 
@@ -219,7 +219,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   // to control
   io.ctrl.inst := id_inst
   io.ctrl.ma_pc := pc(1)
-  io.ctrl.ma_addr := (dmem_req_addr(1) || dmem_req_addr(0)) && dmem_sgen.word || dmem_req_addr(0) && dmem_sgen.half
+  io.ctrl.ma_addr := dmem_sgen.misaligned
   io.ctrl.br_taken := alu.io.out(0)
   io.ctrl.mul_ready := mulDivReqReady
   io.ctrl.clear_sb := dmem_clear_sb || mulDivRespValid
