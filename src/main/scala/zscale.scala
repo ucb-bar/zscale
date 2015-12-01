@@ -10,7 +10,7 @@ import rocket._
 
 trait HasZscaleParameters {
   implicit val p: Parameters
-  val xLen = 32
+  val xLen = p(XLen)
   val coreInstBits = p(CoreInstBits)
   val fastMulDiv = p(FastMulDiv)
 

@@ -57,7 +57,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   val id_imm = ImmGen(io.ctrl.id.sel_imm, id_inst)
 
   // ALU
-  val alu = Module(new ALU(xLen))
+  val alu = Module(new ALU)
   alu.io.fn := io.ctrl.id.fn_alu
   alu.io.in1 := MuxLookup(io.ctrl.id.sel_alu1, SInt(0), Seq(
       A1_RS1 -> id_rs(0).toSInt,
