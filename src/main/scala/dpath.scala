@@ -148,7 +148,7 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
   io.ctrl.csr_interrupt := csr.io.interrupt
   io.ctrl.csr_interrupt_cause := csr.io.interrupt_cause
 
-  printf("Z%d: %d [%d] [%s%s%s%s%s%s|%s%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
+  printf("Z%d: %d [%d] [%s%s%s%s%s%s|%s%s%s%s] pc=[%x] W[r%d=%x][%d] R[r%d=%x] R[r%d=%x] [%d|%x] inst=[%x] DASM(%x)\n",
     io.host.id, csr.io.time(31, 0), !io.ctrl.killdx,
     Reg(init=45,next=Mux(!io.imem.hready, 73, 45)), // I -
     Reg(init=45,next=Mux(io.ctrl.id.br && io.ctrl.br_taken, 66, 45)), // B -
