@@ -7,11 +7,11 @@ import junctions._
 class HastiSRAM(depth: Int)(implicit p: Parameters) extends HastiModule()(p) {
   val io = new HastiSlaveIO
 
-  val wdata = Reg(Vec(Bits(width = 8), hastiDataBits/8))
+  val wdata = Reg(Vec(hastiDataBits/8, Bits(width = 8)))
   val waddr = Reg(UInt(width = hastiAddrBits))
   val wvalid = Reg(init = Bool(false))
   val wsize = Reg(UInt(width = SZ_HSIZE))
-  val ram = SeqMem(Vec(Bits(width = 8), hastiDataBits/8), depth)
+  val ram = SeqMem(depth, Vec(hastiDataBits/8, Bits(width = 8)))
 
   val wmask_lut = MuxLookup(wsize, Bits(0xf), Seq(
         UInt(0) -> Bits(0x1),

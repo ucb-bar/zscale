@@ -176,7 +176,7 @@ class Control(implicit p: Parameters) extends ZscaleModule()(p) {
   val id_waddr = io.dpath.inst(11, 7)
   val id_raddr1 = io.dpath.inst(19, 15)
   val id_raddr2 = io.dpath.inst(24, 20)
-  val id_csr_en = _id_csr != CSR.N
+  val id_csr_en = _id_csr =/= CSR.N
   val id_csr_ren = (_id_csr === CSR.S || _id_csr === CSR.C) && id_raddr1 === UInt(0)
   val id_csr = Mux(id_csr_ren, CSR.R, _id_csr)
 
