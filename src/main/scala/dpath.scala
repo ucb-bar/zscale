@@ -75,7 +75,6 @@ class Datapath(implicit p: Parameters) extends ZscaleModule()(p) {
 
   // CSR
   val csr_operand = alu.io.adder_out
-  csr.io.host <> io.host
   csr.io.rw.addr := id_inst(31, 20)
   csr.io.rw.cmd := io.ctrl.id.csr_cmd
   csr.io.rw.wdata := csr_operand
